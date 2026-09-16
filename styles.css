@@ -1,0 +1,566 @@
+.aegis-modal-root {
+    max-height: 80vh;
+    min-height: 80vh;
+    min-width: 85vw;
+    max-width: 85vw;
+}
+
+.aegis-modal-empty-logs {
+    display: grid;
+    place-content: center;
+    height: 100%;
+}
+
+.aegis-modal-info-icon {
+    position: absolute;
+    top: -24px;
+    right: -24px;
+    color: var(--interactive-normal);
+    cursor: pointer;
+}
+
+.aegis-modal-header {
+    flex-direction: column;
+
+    /* width: 100%; */
+}
+
+.aegis-modal-footer {
+    align-items: center;
+}
+
+.aegis-modal-content-container {
+    /* max-height: 80vh; */
+    overflow: hidden;
+    height: 100%;
+    transition: opacity 100ms ease-in;
+}
+
+.aegis-modal-content {
+    padding-bottom: 20px;
+    height: 100%;
+}
+
+.aegis-modal-content-inner {
+    padding-top: 1rem;
+    padding-bottom: 1rem;
+    height: 100%;
+}
+
+.aegis-modal-header > div:has(input) {
+    width: 100%;
+}
+
+.aegis-modal-tab-bar-item {
+    padding-bottom: 16px;
+    margin-bottom: -2px;
+}
+
+.aegis-modal-tab-bar {
+    margin-top: 20px;
+    width: 100%;
+    justify-content: space-around;
+}
+
+.aegis-modal-danger-btn {
+    color: var(--white-500);
+    background-color: var(--button-danger-background);
+}
+
+.aegis-log-btn svg {
+    color: var(--interactive-normal);
+}
+
+:is(.aegis-log-btn:hover, .aegis-log-btn[class*="selected"]) svg {
+    color: var(--interactive-active);
+}
+
+.folder-upload-container {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0;
+    background-color: var(--background-base-lowest, var(--input-background, rgba(0, 0, 0, 0.05)));
+}
+
+.folder-upload-input {
+    cursor: pointer;
+    padding: 10px 0 10px 10px;
+    color: var(--text-default, var(--header-secondary));
+}
+
+.folder-upload-button {
+    margin: 6px;
+    padding: 4px 8px;
+}
+
+.aegis-modal-msg-context {
+    display: flex;
+    gap: 4px;
+    flex-wrap: wrap;
+    align-items: center;
+    padding: 3px 8px 5px;
+    color: var(--text-muted);
+    font-size: 12px;
+}
+
+.aegis-modal-msg-context-source {
+    color: var(--text-default);
+    font-weight: 600;
+}
+
+.aegis-modal-jump-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    border-radius: 4px;
+    padding: 2px 8px;
+    font-size: 13px;
+    font-weight: 600;
+    background: color-mix(in srgb, var(--interactive-accent, #5865f2) 15%, transparent);
+    color: var(--text-link, #00a8fc);
+    cursor: pointer;
+    user-select: none;
+}
+
+.aegis-modal-jump-pill:hover {
+    background: var(--interactive-accent, #5865f2);
+    color: #fff;
+}
+
+.aegis-modal-author-name {
+    cursor: pointer;
+    font-weight: 600;
+}
+
+.aegis-modal-author-name:hover {
+    color: var(--text-link);
+}
+
+.aegis-modal-load-sentinel {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 32px;
+    padding: 8px 0;
+}
+
+.aegis-modal-load-dots {
+    display: flex;
+    gap: 5px;
+}
+
+.aegis-modal-load-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--interactive-normal);
+    animation: aegis-load-pulse 1.2s infinite;
+}
+
+.aegis-modal-load-dot:nth-child(2) {
+    animation-delay: 0.2s;
+}
+
+.aegis-modal-load-dot:nth-child(3) {
+    animation-delay: 0.4s;
+}
+
+@keyframes aegis-load-pulse {
+    0%, 60%, 100% { opacity: 0.3; }
+    30% { opacity: 1; }
+}
+
+.aegis-modal-filter-area {
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    position: relative;
+}
+
+.aegis-modal-filter-panel {
+    position: fixed;
+    display: flex;
+    flex-direction: column;
+    padding: 6px;
+    background: var(--background-base-low, #fff);
+    border: 1px solid var(--background-base-lowest, rgba(0, 0, 0, 0.1));
+    border-radius: 8px;
+    box-shadow: var(--shadow-high, 0 8px 16px rgba(0, 0, 0, 0.24));
+    max-height: 320px;
+    overflow-y: auto;
+    z-index: 3000;
+    pointer-events: auto;
+}
+
+.aegis-modal-filter-panel-title {
+    color: var(--text-muted);
+    font-size: 12px;
+    font-weight: 700;
+    text-transform: uppercase;
+    padding: 4px 10px 2px;
+}
+
+.aegis-modal-filter-item-text {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    min-width: 0;
+}
+
+.aegis-modal-filter-item-main {
+    color: var(--text-default);
+    font-size: 14px;
+    font-weight: 500;
+}
+
+.aegis-modal-filter-item-sub {
+    color: var(--text-muted);
+    font-size: 12px;
+}
+
+.aegis-modal-filter-item-sub b {
+    color: var(--text-default);
+    font-weight: 700;
+}
+
+.aegis-modal-filter-item-back {
+    opacity: 0.7;
+}
+
+.aegis-modal-pick-input {
+    background: var(--background-base-lowest, #f2f2f2);
+    border: 1px solid transparent;
+    border-radius: 4px;
+    color: var(--text-default, #000);
+    padding: 7px 8px;
+    font-size: 14px;
+    margin-bottom: 2px;
+    box-sizing: border-box;
+    outline: none;
+}
+
+.aegis-modal-pick-input:focus {
+    border-color: var(--interactive-accent, #5865f2);
+}
+
+.aegis-modal-filter-actions {
+    display: flex;
+    gap: 6px;
+    padding: 6px 4px 2px;
+}
+
+.aegis-modal-filter-btn {
+    all: unset;
+    cursor: pointer;
+    background: var(--brand-500, #5865f2);
+    color: #fff;
+    border-radius: 4px;
+    padding: 6px 14px;
+    font-size: 14px;
+    font-weight: 600;
+    text-align: center;
+}
+
+.aegis-modal-filter-btn:disabled {
+    opacity: 0.5;
+    cursor: default;
+}
+
+.aegis-modal-filter-btn-secondary {
+    background: var(--background-secondary);
+    color: var(--text-default);
+}
+
+.aegis-modal-filter-panel-divider {
+    height: 1px;
+    background: var(--background-modifier-accent);
+    margin: 4px 8px;
+}
+
+.aegis-modal-filter-item {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 7px 10px;
+    border-radius: 4px;
+    font-size: 14px;
+    color: var(--text-default);
+    cursor: pointer;
+    user-select: none;
+}
+
+.aegis-modal-filter-item:hover,
+.aegis-modal-filter-item-active {
+    background: var(--background-modifier-hover, rgba(0, 0, 0, 0.08));
+}
+
+.aegis-modal-filter-panel-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    color: var(--interactive-normal);
+}
+
+.aegis-modal-filter-chip-key {
+    color: var(--text-muted);
+}
+
+.aegis-modal-filter-chip-value {
+    color: var(--text-default);
+}
+
+.aegis-modal-filter-chip-editable {
+    cursor: pointer;
+}
+
+.aegis-modal-filter-chip-editable:hover {
+    text-decoration: underline;
+}
+
+.aegis-modal-date-input {
+    width: 100%;
+    background: var(--background-base-lowest, #f2f2f2);
+    border: 1px solid transparent;
+    border-radius: 4px;
+    color: var(--text-default, #000);
+    padding: 8px;
+    font-size: 14px;
+    box-sizing: border-box;
+}
+
+.aegis-settings-section {
+    margin-top: 16px;
+}
+
+.aegis-settings-section-first {
+    margin-top: 4px;
+}
+
+.aegis-settings-section-title {
+    margin-top: 12px;
+    margin-bottom: 4px;
+}
+
+.aegis-settings-section-danger {
+    color: var(--text-feedback-critical, #f23f43);
+}
+
+.aegis-settings-section-hint {
+    color: var(--text-muted);
+    font-size: 13px;
+    margin-bottom: 8px;
+}
+
+.aegis-setting-wrap {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.aegis-setting-label {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.aegis-setting-title {
+    color: var(--text-strong, var(--text-default));
+}
+
+.aegis-setting-description {
+    color: var(--text-subtle, var(--text-muted));
+}
+
+.aegis-setting-number {
+    max-width: 280px;
+}
+
+.aegis-modal-query-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    margin-top: 4px;
+}
+
+.aegis-modal-query-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    background: var(--background-secondary);
+    border: 1px solid var(--background-tertiary);
+    border-radius: 999px;
+    padding: 2px 8px;
+    font-size: 12px;
+    color: var(--text-default);
+}
+
+.aegis-modal-query-chip-remove {
+    all: unset;
+    cursor: pointer;
+    color: var(--text-muted);
+    line-height: 1;
+}
+
+.aegis-modal-query-chip-remove:hover {
+    color: var(--text-danger);
+}
+
+.aegis-id-chip-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    margin-bottom: 8px;
+}
+
+.aegis-id-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    background: var(--background-base-low, var(--background-secondary));
+    border: 1px solid var(--background-base-lowest, var(--background-tertiary));
+    border-radius: 8px;
+    padding: 4px 8px;
+}
+
+.aegis-id-chip-unknown {
+    border-color: var(--text-feedback-critical, var(--status-danger, #f23f43));
+}
+
+.aegis-id-chip-icon {
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    object-fit: cover;
+}
+
+.aegis-id-chip-icon-placeholder {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--background-base-lowest, var(--background-tertiary));
+    font-size: 10px;
+    color: var(--text-muted);
+}
+
+.aegis-id-chip-text {
+    display: flex;
+    flex-direction: column;
+    line-height: 1.1;
+}
+
+.aegis-id-chip-name {
+    font-size: 13px;
+    color: var(--text-default);
+}
+
+.aegis-id-chip-type {
+    font-size: 10px;
+    color: var(--text-muted);
+}
+
+.aegis-id-chip-remove {
+    all: unset;
+    cursor: pointer;
+    color: var(--text-muted);
+    padding: 0 2px;
+    font-size: 14px;
+}
+
+.aegis-id-chip-remove:hover {
+    color: var(--text-feedback-critical, var(--text-danger, #f23f43));
+}
+
+.aegis-id-manual {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    margin-top: 8px;
+}
+
+.aegis-id-manual-add {
+    all: unset;
+    cursor: pointer;
+    background: var(--button-secondary-background);
+    color: var(--button-secondary-text);
+    border-radius: 4px;
+    padding: 6px 12px;
+    font-size: 14px;
+}
+
+.aegis-id-manual-add:hover {
+    background: var(--button-secondary-background-hover);
+}
+
+.aegis-rules-validation {
+    margin-top: 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.aegis-rules-rule-valid {
+    font-size: 12px;
+    color: var(--text-muted);
+    font-family: monospace;
+}
+
+.aegis-rules-rule-invalid {
+    font-size: 12px;
+    color: var(--text-feedback-critical, var(--text-danger, #f23f43));
+    font-family: monospace;
+}
+
+.aegis-rules-textarea {
+    width: 100%;
+    background: var(--background-base-lowest, var(--background-secondary, rgba(0, 0, 0, 0.05)));
+    color: var(--text-default, var(--text-normal));
+    border: 1px solid var(--background-base-low, var(--background-tertiary, rgba(0, 0, 0, 0.1)));
+    border-radius: 4px;
+    padding: 8px;
+    resize: vertical;
+    font-family: monospace;
+    font-size: 13px;
+    box-sizing: border-box;
+    outline: none;
+}
+
+.aegis-rules-textarea:focus {
+    border-color: var(--interactive-accent, #5865f2);
+}
+
+.aegis-ext-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    margin-bottom: 8px;
+}
+
+.aegis-ext-chip {
+    all: unset;
+    cursor: pointer;
+    border: 1px solid var(--background-base-lowest, var(--background-tertiary));
+    border-radius: 999px;
+    padding: 2px 10px;
+    font-size: 12px;
+    color: var(--text-muted);
+    display: inline-block;
+}
+
+.aegis-ext-chip:hover {
+    border-color: var(--interactive-accent, #5865f2);
+}
+
+.aegis-ext-chip-active {
+    color: var(--text-default);
+    background: var(--background-modifier-selected, color-mix(in srgb, var(--interactive-accent, #5865f2) 18%, transparent));
+    border-color: var(--interactive-accent, #5865f2);
+}
+
+.aegis-ext-custom {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    max-width: 280px;
+}

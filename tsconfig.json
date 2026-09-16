@@ -1,0 +1,27 @@
+{
+    "compilerOptions": {
+        "baseUrl": ".",
+        "paths": {
+            "@api/*": ["../../../SourceCode/Vencord/src/api/*"],
+            "@components/*": ["../../../SourceCode/Vencord/src/components/*"],
+            "@main/*": ["../../../SourceCode/Vencord/src/main/*"],
+            "@shared/*": ["../../../SourceCode/Vencord/src/shared/*"],
+            "@utils/*": ["../../../SourceCode/Vencord/src/utils/*"],
+            "@webpack": ["../../../SourceCode/Vencord/src/webpack/webpack"],
+            "@webpack/common": ["../../../SourceCode/Vencord/src/webpack/common"],
+            "@webpack/common/*": ["../../../SourceCode/Vencord/src/webpack/common/*"],
+            "@webpack/patcher": ["../../../SourceCode/Vencord/src/webpack/patchWebpack"],
+            "@vencord/discord-types": ["../../../SourceCode/Vencord/packages/discord-types/index.d.ts"]
+        },
+        "jsx": "react",
+        "lib": ["ESNext", "DOM"],
+        "module": "ESNext",
+        "moduleResolution": "bundler",
+        "noEmit": true,
+        "skipLibCheck": true,
+        "strict": true,
+        "target": "ESNext",
+        "types": ["vite/client"]
+    },
+    "include": ["./**/*.ts", "./**/*.tsx"]
+}
