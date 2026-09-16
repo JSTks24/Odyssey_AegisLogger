@@ -9,10 +9,10 @@ import { updateMessage } from "@api/MessageUpdater";
 import { findStoreLazy } from "@webpack";
 import { FluxDispatcher, Menu, MessageActions, React, Toasts, UserStore } from "@webpack/common";
 
-import { openLogModal } from "../components/LogsModal";
-import { deleteMessageIDB } from "../db";
+import logsModal from "../components/LogsModal";
+import idb from "../db";
 import { settings } from "../index";
-import { addToXAndRemoveFromOpposite, getListMenuState, getIdList, ListType, removeFromX } from ".";
+import { addToXAndRemoveFromOpposite, getListMenuState, ListType, removeFromX } from ".";
 import { t } from "./i18n";
 
 const SortedGuildStore = findStoreLazy("SortedGuildStore");
@@ -62,14 +62,14 @@ function renderOpenLogs(idType: idKeys, props: any) {
         <Menu.MenuItem
             id={`open-logs-for-${idType.toLowerCase()}`}
             label={t("menu.openLogsFor", { type: t("idType." + idType.toLowerCase()) })}
-            action={() => openLogModal(`${idType.toLowerCase()}:${id}`)}
+            action={() => logsModal.openLogModal(`${idType.toLowerCase()}:${id}`)}
         />
     );
 }
 
 const removeMessageAction = async (props: any) => {
     try {
-        await deleteMessageIDB(props.message.id);
+        await idb.deleteMessageIDB(props.message.id);
         if (props.message.deleted) {
             FluxDispatcher.dispatch({
                 type: "MESSAGE_DELETE",
@@ -111,7 +111,7 @@ export const contextMenuPath: NavContextMenuPatchCallback = (children, props) =>
                 <Menu.MenuItem
                     id="open-logs"
                     label={t("menu.openLogs")}
-                    action={() => openLogModal()}
+                    action={() => logsModal.openLogModal()}
                 />
 
                 {Object.keys(idFunctions).map(IdType => renderOpenLogs(IdType as idKeys, props))}

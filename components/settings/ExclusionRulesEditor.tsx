@@ -5,11 +5,10 @@
  */
 
 import { classNameFactory } from "@utils/css";
-import { useState } from "@webpack/common";
 
 import { settings } from "../../settings";
-import { t } from "../../utils/i18n";
 import { parseExclusionRule } from "../../utils/exclusionRules";
+import { t } from "../../utils/i18n";
 import { resolveId } from "./resolveId";
 
 const cl = classNameFactory("aegis-rules-");

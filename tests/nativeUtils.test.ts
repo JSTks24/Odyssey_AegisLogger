@@ -1,7 +1,14 @@
+/*
+ * Vencord, a Discord client mod
+ * Copyright (c) 2026 JST
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
+
 import { randomUUID } from "node:crypto";
 import { mkdir, rm, stat } from "node:fs/promises";
-import path from "node:path";
 import { tmpdir } from "node:os";
+import path from "node:path";
+
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { ensureDirectoryExists, exists, getAttachmentIdFromFilename, sleep } from "../native/utils";

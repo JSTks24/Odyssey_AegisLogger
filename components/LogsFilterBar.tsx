@@ -5,17 +5,22 @@
  */
 
 import { classNameFactory } from "@api/Styles";
-import { ClockIcon, ImageIcon, LinkIcon } from "@components/Icons";
-import { ChannelStore, GuildStore, React, ReactDOM, RelationshipStore, TextInput, UserStore, useEffect, useMemo, useRef, useState } from "@webpack/common";
+import { Button } from "@components/Button";
+import { ClockIcon, ImageIcon, LinkIcon, PlusIcon } from "@components/Icons";
+import { ChannelStore, GuildStore, React, ReactDOM, RelationshipStore, useEffect, useMemo, useRef, UserStore, useState } from "@webpack/common";
 
-import { getDistinctLogEntities, LogEntities } from "../db";
+import idb, { LogEntities } from "../db";
+import calendar from "../utils/calendar";
+import { getLocale, t } from "../utils/i18n";
 import { MatchCandidate, matchCandidates } from "../utils/idMatch";
-import { t } from "../utils/i18n";
-import { QueryResult, removeQueryToken, tokenizeQuery, upsertQueryToken } from "../utils/parseQuery";
+import { parseQuery, QueryResult, removeQueryToken, tokenizeQuery, upsertQueryToken } from "../utils/parseQuery";
+import searchBox from "../utils/searchBox";
+import DateCalendar from "./DateCalendar";
+import { resolveId } from "./settings/resolveId";
 
 const cl = classNameFactory("aegis-modal-");
 
-export type FilterKind = "user" | "server" | "channel" | "has" | "before" | "after";
+export type FilterKind = "user" | "server" | "channel" | "has" | "before" | "after" | "date";
 type PickKind = FilterKind;
 
 const HAS_VALUES = ["attachment", "image", "video", "file", "sound", "embed", "link"];
@@ -118,6 +123,30 @@ function hasGlyph(value: string) {
     }
 }
 
+function ChevronGlyph() {
+    return (
+        <svg viewBox="0 0 16 16" width={16} height={16} fill="currentColor">
+            <path d="M3.3 5.7 8 10.4l4.7-4.7 1.1 1.1L8 12.6 2.2 6.8l1.1-1.1Z" />
+        </svg>
+    );
+}
+
+function CalendarGlyph() {
+    return (
+        <svg viewBox="0 0 16 16" width={16} height={16} fill="currentColor">
+            <path d="M5 1v1H3.5A1.5 1.5 0 0 0 2 3.5v9A1.5 1.5 0 0 0 3.5 14h9a1.5 1.5 0 0 0 1.5-1.5v-9A1.5 1.5 0 0 0 12.5 2H11V1H9.5v1h-3V1H5Zm-1.5 4h9v7h-9V5Z" />
+        </svg>
+    );
+}
+
+function TrashGlyph() {
+    return (
+        <svg viewBox="0 0 16 16" width={18} height={18} fill="currentColor">
+            <path d="M6.5 1h3a1 1 0 0 1 1 1v1H13v1.5h-1l-.6 9a1 1 0 0 1-1 .9H5.6a1 1 0 0 1-1-.9L4 4.5H3V3h2.5V2a1 1 0 0 1 1-1Zm.5 2h2v-.5H7V3ZM5.5 4.5l.6 8.5h3.8l.6-8.5H5.5Z" />
+        </svg>
+    );
+}
+
 function chipLabel(key: string, negate: boolean) {
     if (negate) return t("filter.exclude");
     const labelKey = LABEL_KEY[key];
@@ -139,6 +168,9 @@ function chipValue(q: QueryResult) {
             return ChannelStore.getChannel?.(q.value)?.name ?? q.value;
         case "has":
             return t(`has.${q.value}`);
+        case "before":
+        case "after":
+            return /^\d{4}-\d{2}-\d{2}$/.test(q.value) ? calendar.formatDayLabel(q.value, getLocale()) : q.value;
         default:
             return q.value;
     }
@@ -146,23 +178,23 @@ function chipValue(q: QueryResult) {
 
 function buildEntityPool(kind: "user" | "server" | "channel", logged: LogEntities | null): MatchCandidate[] {
     const entries = new Map<string, MatchCandidate>();
-    const push = (id: string, name: string | undefined, type: string) => {
+    const push = (id: string, name: string | undefined, type: string, username?: string) => {
         if (!id || entries.has(id)) return;
-        entries.set(id, { id, name: name ?? id, typeLabel: t(`settings.type${type === "server" ? "Server" : type === "channel" ? "Channel" : "User"}`) });
+        entries.set(id, { id, name: name ?? id, username, typeLabel: t(`settings.type${type === "server" ? "Server" : type === "channel" ? "Channel" : "User"}`) });
     };
 
     if (kind === "user") {
         for (const author of logged?.authors ?? [])
-            push(author.id, author.globalName ?? author.username, "user");
+            push(author.id, author.globalName ?? author.username, "user", author.username);
 
         for (const friendId of (RelationshipStore.getFriendIDs?.() ?? [])) {
             const user = UserStore.getUsers()[friendId];
-            if (user) push(friendId, user.globalName ?? user.username, "user");
+            if (user) push(friendId, user.globalName ?? user.username, "user", user.username);
         }
 
         for (const dmUserId of (ChannelStore.getDMUserIds?.() ?? [])) {
             const user = UserStore.getUsers()[dmUserId];
-            if (user) push(dmUserId, user.globalName ?? user.username, "user");
+            if (user) push(dmUserId, user.globalName ?? user.username, "user", user.username);
         }
     }
 
@@ -197,33 +229,41 @@ interface FilterBarProps {
     query: string;
     onChange: (query: string) => void;
     placeholder: string;
+    active: boolean;
 }
 
-export function FilterBar({ query, onChange, placeholder }: FilterBarProps) {
+export default function FilterBar({ query, onChange, placeholder, active }: FilterBarProps) {
     const { queries } = useMemo(() => tokenizeQuery(query), [query]);
     const [panelOpen, setPanelOpen] = useState(false);
     const [activeKind, setActiveKind] = useState<PickKind | null>(null);
-    const [pickInput, setPickInput] = useState("");
-    const [dateInitial, setDateInitial] = useState("");
+    const [dateKind, setDateKind] = useState<"before" | "after">("before");
+    const [dateValue, setDateValue] = useState("");
+    const [dateAnchor, setDateAnchor] = useState<{ top: number; left: number; } | null>(null);
+    const [calendarOpen, setCalendarOpen] = useState(false);
+    const [dateTypeOpen, setDateTypeOpen] = useState(false);
+    const dateTypeRef = useRef(false);
+    dateTypeRef.current = dateTypeOpen;
     const [logged, setLogged] = useState<LogEntities | null>(null);
-    const [highlightIndex, setHighlightIndex] = useState(0);
-    const [editSeq, setEditSeq] = useState(0);
+    const [highlightIndex, setHighlightIndex] = useState(-1);
     const areaRef = useRef<HTMLDivElement | null>(null);
     const panelRef = useRef<HTMLDivElement | null>(null);
-    const pickInputRef = useRef<HTMLInputElement | null>(null);
-    const dateRef = useRef<HTMLInputElement | null>(null);
+    const dateFieldRef = useRef<HTMLDivElement | null>(null);
     const activeKindRef = useRef<PickKind | null>(null);
     const queryRef = useRef(query);
     queryRef.current = query;
     const onChangeRef = useRef(onChange);
     onChangeRef.current = onChange;
     const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-    const highlightRef = useRef(0);
+    const highlightRef = useRef(-1);
     const itemsRef = useRef<PanelItem[]>([]);
+    const boxRef = useRef<HTMLDivElement | null>(null);
     const [anchor, setAnchor] = useState<{ top: number; left: number; width: number; } | null>(null);
+    const keepPanelOpen = () => {
+        if (closeTimer.current != null) clearTimeout(closeTimer.current);
+    };
 
     useEffect(() => {
-        getDistinctLogEntities().then(setLogged).catch(() => setLogged(null));
+        idb.getDistinctLogEntities().then(setLogged).catch(() => setLogged(null));
     }, []);
 
     useEffect(() => {
@@ -236,12 +276,11 @@ export function FilterBar({ query, onChange, placeholder }: FilterBarProps) {
         const area = areaRef.current;
         if (!area) return;
 
-        const focusInput = area.querySelector("input");
-
         const handleFocus = () => {
             if (closeTimer.current != null) clearTimeout(closeTimer.current);
-            if (focusInput) {
-                const r = focusInput.getBoundingClientRect();
+            const box = boxRef.current;
+            if (box) {
+                const r = box.getBoundingClientRect();
                 setAnchor({ top: r.bottom, left: r.left, width: r.width });
             }
             setPanelOpen(true);
@@ -249,6 +288,12 @@ export function FilterBar({ query, onChange, placeholder }: FilterBarProps) {
         const handleBlur = () => {
             if (closeTimer.current != null) clearTimeout(closeTimer.current);
             closeTimer.current = setTimeout(() => {
+                const kind = activeKindRef.current;
+                if (kind === "user" || kind === "server" || kind === "channel") {
+                    const split = searchBox.splitActiveToken(queryRef.current, kind);
+                    if (split != null && split.rest === "") onChangeRef.current(split.head.trimEnd());
+                }
+                setCalendarOpen(false);
                 setPanelOpen(false);
                 setActiveKind(null);
             }, 150);
@@ -260,18 +305,23 @@ export function FilterBar({ query, onChange, placeholder }: FilterBarProps) {
             if (!inArea && !inPanel) return;
 
             if (e.key === "Escape") {
-                if (activeKind != null) {
+                if (dateTypeRef.current) {
+                    e.preventDefault();
+                    setDateTypeOpen(false);
+                    setHighlightIndex(-1);
+                    highlightRef.current = -1;
+                } else if (activeKind != null) {
                     e.preventDefault();
                     setActiveKind(null);
-                    setHighlightIndex(0);
-                    highlightRef.current = 0;
+                    setHighlightIndex(-1);
+                    highlightRef.current = -1;
                 } else {
                     setPanelOpen(false);
                 }
                 return;
             }
 
-            if (activeKind === "before" || activeKind === "after") return;
+            if (activeKind === "date" && !dateTypeRef.current) return;
 
             const items = itemsRef.current;
             if (!items.length) return;
@@ -287,6 +337,7 @@ export function FilterBar({ query, onChange, placeholder }: FilterBarProps) {
                 highlightRef.current = next;
                 setHighlightIndex(next);
             } else if (e.key === "Enter") {
+                if (highlightRef.current < 0) return;
                 e.preventDefault();
                 items[highlightRef.current]?.action();
             }
@@ -316,44 +367,25 @@ export function FilterBar({ query, onChange, placeholder }: FilterBarProps) {
         const panel = panelRef.current;
         if (!panel || !panelOpen) return;
 
-        const cancelClose = () => {
-            if (closeTimer.current != null) clearTimeout(closeTimer.current);
+        const cancelClose = keepPanelOpen;
+        const blockMousedown = (e: MouseEvent) => {
+            e.preventDefault();
+            const target = e.target as HTMLElement | null;
+            const input = target?.closest?.("input, textarea");
+            if (input) (input as HTMLElement).focus();
         };
-        const blockMousedown = (e: MouseEvent) => e.preventDefault();
         const onClick = (e: MouseEvent) => {
             const target = e.target as HTMLElement;
             const itemEl = target.closest?.("[data-idx]");
-            if (itemEl) {
-                itemsRef.current[Number(itemEl.getAttribute("data-idx"))]?.action();
-                return;
-            }
-            const btn = target.closest?.("[data-action]");
-            const action = btn?.getAttribute("data-action");
-            if (action === "applyDate") {
-                const value = dateRef.current?.value ?? "";
-                if (value) applyPickRef.current?.(activeKindRef.current as PickKind, value);
-            } else if (action === "cancelDate") {
-                changeKindRef.current?.(null);
-            }
+            if (itemEl) itemsRef.current[Number(itemEl.getAttribute("data-idx"))]?.action();
         };
-        const onInput = (e: Event) => {
-            const target = e.target as HTMLInputElement;
-            if (target.classList.contains("aegis-modal-pick-input")) {
-                setPickInput(target.value);
-                setHighlightIndex(0);
-                highlightRef.current = 0;
-            }
-        };
-
         panel.addEventListener("focusin", cancelClose);
         panel.addEventListener("mousedown", blockMousedown);
         panel.addEventListener("click", onClick);
-        panel.addEventListener("input", onInput);
         return () => {
             panel.removeEventListener("focusin", cancelClose);
             panel.removeEventListener("mousedown", blockMousedown);
             panel.removeEventListener("click", onClick);
-            panel.removeEventListener("input", onInput);
         };
     }, [panelOpen]);
 
@@ -361,27 +393,83 @@ export function FilterBar({ query, onChange, placeholder }: FilterBarProps) {
         onChange(upsertQueryToken(query, kind, `${negate ? "!" : ""}${kind}:${value}`, negate, kind === "has"));
 
     const applyPick = (kind: PickKind, value: string) => {
-        applyToken(kind, value, queries.find(q => q.key === kind)?.negate ?? false);
+        const negate = queries.find(q => (CANONICAL_KIND[q.key] ?? q.key) === kind)?.negate ?? false;
+        const split = searchBox.splitActiveToken(query, kind);
+        const cleaned = split != null ? split.head.trimEnd() : query;
+        onChange(upsertQueryToken(cleaned, kind, `${negate ? "!" : ""}${kind}:${value}`, negate, kind === "has"));
         changeKind(null);
     };
-    const applyPickRef = useRef(applyPick);
-    applyPickRef.current = applyPick;
-
-    const changeKind = (kind: PickKind | null, dateInit?: string) => {
+    const changeKind = (kind: PickKind | null) => {
         setActiveKind(kind);
         activeKindRef.current = kind;
-        setPickInput("");
-        setDateInitial(dateInit ?? "");
-        setEditSeq(s => s + 1);
-        setHighlightIndex(0);
-        highlightRef.current = 0;
+        setCalendarOpen(false);
+        setDateTypeOpen(false);
+        setHighlightIndex(-1);
+        highlightRef.current = -1;
     };
-    const changeKindRef = useRef(changeKind);
-    changeKindRef.current = changeKind;
+    const startPick = (kind: "user" | "server" | "channel") => {
+        onChangeRef.current(upsertQueryToken(queryRef.current, kind, `${kind}:`));
+        changeKind(kind);
+    };
+    const dateToken = () => queries.find(q => q.key === "before" || q.key === "after");
+
+    const openDateEditor = (current?: QueryResult) => {
+        const existing = current ?? dateToken();
+        setDateKind(existing?.key === "after" ? "after" : "before");
+        setDateValue(existing?.value ?? "");
+        changeKind("date");
+    };
+
+    const commitDate = (kind: "before" | "after", value: string) => {
+        setDateKind(kind);
+        setDateValue(value);
+        onChange(upsertQueryToken(searchBox.removeTokens(query, ["before", "after"]), kind, `${kind}:${value}`));
+    };
+
+    const addDate = () => commitDate(dateKind, calendar.todayISO());
+
+    const removeDate = () => {
+        setDateValue("");
+        setCalendarOpen(false);
+        onChange(searchBox.removeTokens(query, ["before", "after"]));
+    };
+
+    const toggleCalendar = () => {
+        if (calendarOpen) {
+            setCalendarOpen(false);
+            return;
+        }
+
+        const field = dateFieldRef.current;
+        if (!field) return;
+        const rect = field.getBoundingClientRect();
+        setDateAnchor({ top: rect.bottom, left: rect.left });
+        setCalendarOpen(true);
+    };
+
+    const selectDateType = (kind: "before" | "after") => {
+        commitDate(kind, dateValue);
+        setDateTypeOpen(false);
+        setHighlightIndex(-1);
+        highlightRef.current = -1;
+    };
+
+    const typeItems: PanelItem[] = [
+        {
+            key: "date-before",
+            action: () => selectDateType("before"),
+            render: active => <FilterRow active={active} main={t("filter.dateType.before")} subOnly />
+        },
+        {
+            key: "date-after",
+            action: () => selectDateType("after"),
+            render: active => <FilterRow active={active} main={t("filter.dateType.after")} subOnly />
+        }
+    ];
 
     const editToken = (kind: PickKind, current?: QueryResult) => {
-        const dateInit = current && /^\d{4}-\d{2}-\d{2}$/.test(current.value) ? current.value : undefined;
-        changeKind(kind, dateInit);
+        if (kind === "before" || kind === "after") openDateEditor(current);
+        else changeKind(kind);
     };
 
     const pool = useMemo(
@@ -390,19 +478,26 @@ export function FilterBar({ query, onChange, placeholder }: FilterBarProps) {
             : []),
         [activeKind, logged]
     );
-    const candidates = useMemo(
-        () => (pickInput.trim() ? matchCandidates(pickInput, pool, 8) : pool.slice(0, 8)),
-        [pickInput, pool]
-    );
-    const rawId = /^\d+$/.test(pickInput.trim()) ? pickInput.trim() : null;
-    const rawIdMissing = rawId != null && candidates.length === 0;
-    const isDate = activeKind === "before" || activeKind === "after";
+    const isDate = activeKind === "date";
     const isEntity = activeKind === "user" || activeKind === "server" || activeKind === "channel";
+    const activeSplit = isEntity ? searchBox.splitActiveToken(query, activeKind!) : null;
+    const { tokens, rest } = searchBox.splitLeadingTokens(activeSplit != null ? activeSplit.head : query);
+    const boxRest = activeSplit != null ? activeSplit.rest : rest;
+    const setRest = (value: string) => onChange(activeSplit != null
+        ? activeSplit.head + `${activeKind!}:` + value
+        : searchBox.composeSearchBox(tokens, value));
+    const filterText = activeSplit != null ? activeSplit.rest : "";
+    const candidates = useMemo(
+        () => (filterText.trim() ? matchCandidates(filterText, pool, 8) : pool.slice(0, 8)),
+        [filterText, pool]
+    );
+    const rawId = /^\d+$/.test(filterText.trim()) ? filterText.trim() : null;
+    const rawIdMissing = rawId != null && candidates.length === 0;
 
     const mainItems: PanelItem[] = [
         {
             key: "user",
-            action: () => editToken("user"),
+            action: () => startPick("user"),
             render: active => (
                 <FilterRow
                     active={active}
@@ -414,7 +509,7 @@ export function FilterBar({ query, onChange, placeholder }: FilterBarProps) {
         },
         {
             key: "channel",
-            action: () => editToken("channel"),
+            action: () => startPick("channel"),
             render: active => (
                 <FilterRow
                     active={active}
@@ -426,7 +521,7 @@ export function FilterBar({ query, onChange, placeholder }: FilterBarProps) {
         },
         {
             key: "server",
-            action: () => editToken("server"),
+            action: () => startPick("server"),
             render: active => (
                 <FilterRow
                     active={active}
@@ -439,9 +534,7 @@ export function FilterBar({ query, onChange, placeholder }: FilterBarProps) {
         {
             key: "has",
             action: () => {
-                setActiveKind("has");
-                setHighlightIndex(0);
-                highlightRef.current = 0;
+                changeKind("has");
             },
             render: active => (
                 <FilterRow
@@ -453,26 +546,15 @@ export function FilterBar({ query, onChange, placeholder }: FilterBarProps) {
             )
         },
         {
-            key: "before",
-            action: () => editToken("before"),
+            key: "date",
+            action: () => openDateEditor(),
             render: active => (
                 <FilterRow
                     active={active}
                     icon={<ClockIcon width={20} height={20} />}
-                    main={t("filter.main.before")}
-                    sub={"before: " + t("filter.dateWord")}
-                />
-            )
-        },
-        {
-            key: "after",
-            action: () => editToken("after"),
-            render: active => (
-                <FilterRow
-                    active={active}
-                    icon={<ClockIcon width={20} height={20} />}
-                    main={t("filter.main.after")}
-                    sub={"after: " + t("filter.dateWord")}
+                    main={t("filter.main.date")}
+                    sub={t("filter.dateHint")}
+                    plainSub
                 />
             )
         },
@@ -486,19 +568,31 @@ export function FilterBar({ query, onChange, placeholder }: FilterBarProps) {
         )
     }));
 
+    const entityIcon = (id: string) => {
+        const info = resolveId(id);
+        if (info.iconUrl) return <img className={cl("panel-entity-icon")} src={info.iconUrl} alt="" />;
+        return activeKind === "channel" ? <HashGlyph /> : activeKind === "server" ? <ServerGlyph /> : <PersonGlyph />;
+    };
+
     const entityItems: PanelItem[] = [
         ...candidates.map(candidate => ({
             key: `c-${candidate.id}`,
             action: () => applyPick(activeKind!, candidate.id),
             render: (active: boolean) => (
-                <FilterRow active={active} main={candidate.name} sub={`${candidate.typeLabel} · ${candidate.id}`} />
+                <FilterRow
+                    active={active}
+                    icon={entityIcon(candidate.id)}
+                    main={candidate.name}
+                    sub={activeKind === "user" ? candidate.username ?? `${candidate.typeLabel} · ${candidate.id}` : undefined}
+                    plainSub
+                />
             )
         })),
         ...(rawIdMissing ? [{
             key: "raw-id",
             action: () => applyPick(activeKind!, rawId!),
             render: (active: boolean) => (
-                <FilterRow active={active} main={rawId!} sub={t("settings.unknownId")} />
+                <FilterRow active={active} icon={entityIcon(rawId!)} main={rawId!} sub={t("settings.unknownId")} plainSub />
             )
         }] : []),
         {
@@ -516,22 +610,59 @@ export function FilterBar({ query, onChange, placeholder }: FilterBarProps) {
         ? mainItems
         : activeKind === "has"
             ? hasItems
-            : isEntity ? entityItems : [];
+            : activeKind === "date" ? (dateTypeOpen ? typeItems : []) : isEntity ? entityItems : [];
 
     itemsRef.current = panelItems;
 
     return (
         <div ref={areaRef} className={cl("filter-area")}>
-            <TextInput
-                value={query}
-                onChange={onChange}
-                style={{ width: "100%" }}
-                placeholder={placeholder}
-            />
+            <div
+                ref={boxRef}
+                className={cl("search-box")}
+                onMouseDown={e => {
+                    if (!(e.target as HTMLElement).closest("input")) e.preventDefault();
+                    boxRef.current?.querySelector("input")?.focus();
+                }}
+            >
+                {tokens.map((seg, i) => {
+                    const parsed = parseQuery(seg);
+                    if (typeof parsed === "string")
+                        return null;
+                    return (
+                        <span key={`${i}-${seg}`} className={cl("search-token")}>
+                            <b>{chipLabel(parsed.key, parsed.negate)}:</b>
+                            <span>{chipValue(parsed)}</span>
+                        </span>
+                    );
+                })}
+                {activeSplit != null && (
+                    <span className={cl("search-token", "search-token-active")}>
+                        <b>{chipLabel(activeKind!, false)}:</b>
+                    </span>
+                )}
+                <input
+                    className={cl("search-input")}
+                    value={boxRest}
+                    placeholder={tokens.length === 0 && activeSplit == null ? placeholder : ""}
+                    onChange={e => setRest(e.currentTarget.value)}
+                    onKeyDown={e => {
+                        const input = e.currentTarget;
+                        if (e.key !== "Backspace" || input.value !== "" || input.selectionStart !== 0) return;
+                        if (activeSplit != null) {
+                            e.preventDefault();
+                            onChange(activeSplit.head.trimEnd());
+                            changeKind(null);
+                        } else if (tokens.length > 0) {
+                            e.preventDefault();
+                            onChange(searchBox.composeSearchBox(tokens.slice(0, -1), ""));
+                        }
+                    }}
+                />
+            </div>
             {panelOpen && anchor != null && ReactDOM.createPortal(
                 <div
                     ref={panelRef}
-                    className={cl("filter-panel")}
+                    className={cl("filter-panel") + (active ? "" : " " + cl("overlay-closing"))}
                     style={{ top: anchor.top + 4, left: anchor.left, width: anchor.width }}
                 >
                     {activeKind == null && (
@@ -552,40 +683,80 @@ export function FilterBar({ query, onChange, placeholder }: FilterBarProps) {
                     )}
                     {isEntity && (
                         <>
-                            <input
-                                ref={pickInputRef}
-                                key={`pick-${editSeq}`}
-                                className={cl("pick-input")}
-                                placeholder={t("filter.candidatePlaceholder")}
-                                defaultValue=""
-                            />
+                            <div className={cl("filter-panel-title")}>{t(`filter.pickGroup.${activeKind}`)}</div>
                             {entityItems.map((item, i) => (
                                 <div key={item.key} data-idx={i}>{item.render(i === highlightIndex)}</div>
                             ))}
                         </>
                     )}
-                    {isDate && (
+                    {isDate && (dateTypeOpen ? (
                         <>
-                            <input
-                                ref={dateRef}
-                                key={`date-${editSeq}`}
-                                type="date"
-                                className={cl("date-input")}
-                                style={{ colorScheme: document.querySelector(".theme-dark") ? "dark" : "light" } as React.CSSProperties}
-                                defaultValue={dateInitial}
-                            />
-                            <div className={cl("filter-actions")}>
-                                <button className={cl("filter-btn")} data-action="applyDate">
-                                    {t("filter.apply")}
-                                </button>
-                                <button className={cl("filter-btn", "filter-btn-secondary")} data-action="cancelDate">
-                                    {t("common.cancel")}
-                                </button>
-                            </div>
+                            <div className={cl("filter-panel-title")}>{t("filter.changeDateType")}</div>
+                            {typeItems.map((item, i) => (
+                                <div key={item.key} data-idx={i}>{item.render(i === highlightIndex)}</div>
+                            ))}
                         </>
-                    )}
+                    ) : (
+                        <div className={cl("date-section")}>
+                            <div className={cl("date-label")}>{t("filter.main.date")}</div>
+                            <div className={cl("date-hint")}>{t("filter.dateHint")}</div>
+                            {dateValue === "" ? (
+                                <Button variant="secondary" className={cl("date-add")} onClick={addDate}>
+                                    <PlusIcon width={18} height={18} />
+                                    <span>{t("filter.addDate")}</span>
+                                </Button>
+                            ) : (
+                                <div className={cl("date-row")}>
+                                    <div
+                                        className={cl("date-type")}
+                                        role="button"
+                                        tabIndex={0}
+                                        aria-label={t("filter.changeDateType")}
+                                        onClick={() => setDateTypeOpen(true)}
+                                    >
+                                        <span className={cl("date-type-value")}>{t(`filter.dateType.${dateKind}`)}</span>
+                                        <ChevronGlyph />
+                                    </div>
+                                    <div
+                                        ref={dateFieldRef}
+                                        className={cl("date-field")}
+                                        role="button"
+                                        tabIndex={0}
+                                        aria-label={t("filter.changeDateType")}
+                                        onClick={toggleCalendar}
+                                    >
+                                        <span className={cl("date-field-value")}>{calendar.formatDayLabel(dateValue, getLocale())}</span>
+                                        <CalendarGlyph />
+                                    </div>
+                                    <Button
+                                        variant="secondary"
+                                        size="iconOnly"
+                                        className={cl("date-remove")}
+                                        aria-label={t("filter.removeDate")}
+                                        onClick={removeDate}
+                                    >
+                                        <TrashGlyph />
+                                    </Button>
+                                </div>
+                            )}
+                        </div>
+                    ))}
                 </div>,
                 document.querySelector(".aegis-modal-root")?.closest("[class*=\"layer\"]") ?? document.body
+            )}
+            {calendarOpen && dateAnchor != null && (
+                <DateCalendar
+                    anchor={dateAnchor}
+                    value={dateValue}
+                    language={getLocale()}
+                    active={active}
+                    onInteract={keepPanelOpen}
+                    onPick={iso => {
+                        commitDate(dateKind, iso);
+                        setCalendarOpen(false);
+                    }}
+                    onClose={() => setCalendarOpen(false)}
+                />
             )}
             {queries.length > 0 && (
                 <div className={cl("query-chips")}>
@@ -617,19 +788,20 @@ export function FilterBar({ query, onChange, placeholder }: FilterBarProps) {
     );
 }
 
-function FilterRow({ active, icon, main, sub, subOnly }: {
+function FilterRow({ active, icon, main, sub, subOnly, plainSub }: {
     active: boolean;
     icon?: React.ReactNode;
     main: string;
     sub?: string;
     subOnly?: boolean;
+    plainSub?: boolean;
 }) {
     return (
         <div className={cl("filter-item") + (active ? " " + cl("filter-item-active") : "")}>
             {icon != null && <span className={cl("filter-panel-icon")}>{icon}</span>}
             <span className={cl("filter-item-text")}>
                 <span className={subOnly ? cl("filter-item-sub") : cl("filter-item-main")}>{main}</span>
-                {sub && <span className={cl("filter-item-sub")}><b>{sub.split(":")[0]}:</b>{sub.split(":").slice(1).join(":")}</span>}
+                {sub && <span className={cl("filter-item-sub")}>{plainSub ? sub : <><b>{sub.split(":")[0]}:</b>{sub.split(":").slice(1).join(":")}</>}</span>}
             </span>
         </div>
     );

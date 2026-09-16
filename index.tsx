@@ -15,17 +15,17 @@ import { findByPropsLazy } from "@webpack";
 import { FluxDispatcher, MessageStore, React, UserStore } from "@webpack/common";
 
 import { OpenLogsButton } from "./components/LogsButton";
-import { openLogModal } from "./components/LogsModal";
-import * as idb from "./db";
+import logsModal from "./components/LogsModal";
+import idb, { DBMessageStatus } from "./db";
 import * as LoggedMessageManager from "./LoggedMessageManager";
 import { addMessage } from "./LoggedMessageManager";
 import { settings } from "./settings";
-import { FetchMessagesResponse, LoadMessagePayload, LoggedMessage, LoggedMessageJSON, MessageCreatePayload, MessageDeleteBulkPayload, MessageDeletePayload, MessageUpdatePayload } from "./types";
-import { cleanUpCachedMessage, cleanupUserObject, contentExcluded, getNative, getIdList, isGhostPinged, mapTimestamp, messageJsonToMessageClass, reAddDeletedMessages } from "./utils";
-import { removeContextMenuBindings, setupContextMenuPatches } from "./utils/contextMenu";
+import { FetchMessagesResponse, LoadMessagePayload, LoggedAttachment, LoggedMessage, LoggedMessageJSON, MessageCreatePayload, MessageDeleteBulkPayload, MessageDeletePayload, MessageUpdatePayload } from "./types";
+import { cleanUpCachedMessage, cleanupUserObject, contentExcluded, getIdList, getNative, isGhostPinged, mapTimestamp, messageJsonToMessageClass, reAddDeletedMessages } from "./utils";
 import { diffAttachments } from "./utils/attachmentDiff";
-import { shouldIgnore } from "./utils/index";
+import { removeContextMenuBindings, setupContextMenuPatches } from "./utils/contextMenu";
 import { t } from "./utils/i18n";
+import { shouldIgnore } from "./utils/index";
 import { applyLegacyPluginSettings } from "./utils/legacySettings";
 import { LimitedMap } from "./utils/LimitedMap";
 import { doesMatch } from "./utils/parseQuery";
@@ -87,7 +87,7 @@ async function messageDeleteHandler(payload: MessageDeletePayload & { isBulk: bo
         if (payload.isBulk)
             return message;
 
-        await addMessage(message, ghostPinged ? idb.DBMessageStatus.GHOST_PINGED : idb.DBMessageStatus.DELETED);
+        await addMessage(message, ghostPinged ? DBMessageStatus.GHOST_PINGED : DBMessageStatus.DELETED);
     }
     finally {
         handledMessageIds.delete(payload.id);
@@ -183,7 +183,7 @@ async function messageUpdateHandler(payload: MessageUpdatePayload) {
 
     if (message == null || message.channel_id == null || !hasEdits) return;
 
-    await addMessage(message, idb.DBMessageStatus.EDITED);
+    await addMessage(message, DBMessageStatus.EDITED);
 }
 
 function messageCreateHandler(payload: MessageCreatePayload) {
@@ -211,8 +211,8 @@ async function processMessageFetch(response: FetchMessagesResponse) {
         if (!messages.length) return;
 
         const deletedMessages = messages.filter(m =>
-            m.status === idb.DBMessageStatus.DELETED ||
-            m.status === idb.DBMessageStatus.GHOST_PINGED
+            m.status === DBMessageStatus.DELETED ||
+            m.status === DBMessageStatus.GHOST_PINGED
         );
 
         for (const recivedMessage of response.body) {
@@ -257,7 +257,7 @@ async function processMessageFetch(response: FetchMessagesResponse) {
 
 export default definePlugin({
     name: "AegisLogger",
-    authors: [{ name: "JST", id: 1015591734694129836n }],
+    authors: [{ name: "jstks_24", id: 1015591734694129836n }],
     get description() { return t("settings.description"); },
     dependencies: ["MessageLogger"],
 
@@ -322,7 +322,7 @@ export default definePlugin({
 
     toolboxActions: {
         get [t("toolbox.messageLogger")]() {
-            return openLogModal();
+            return logsModal.openLogModal();
         }
     },
 
@@ -343,7 +343,7 @@ export default definePlugin({
     },
 
     processMessageFetch,
-    openLogModal,
+    openLogModal: logsModal.openLogModal,
     doesMatch,
     reAddDeletedMessages,
     LoggedMessageManager,

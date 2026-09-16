@@ -7,9 +7,9 @@
 import { Button } from "@components/Button";
 import { Alerts, Toasts, useState } from "@webpack/common";
 
-import { clearMessagesIDB } from "../db";
-import { t } from "../utils/i18n";
+import idb from "../db";
 import { logger } from "../index";
+import { t } from "../utils/i18n";
 
 interface ClearLogsButtonProps {
     label?: string;
@@ -32,7 +32,7 @@ export function ClearLogsButton({ label, onCleared }: ClearLogsButtonProps) {
                 onConfirm: async () => {
                     setLoading(true);
                     try {
-                        await clearMessagesIDB();
+                        await idb.clearMessagesIDB();
                         onCleared?.();
                         Toasts.show({
                             id: Toasts.genId(),

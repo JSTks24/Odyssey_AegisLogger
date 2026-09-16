@@ -1,3 +1,9 @@
+/*
+ * Vencord, a Discord client mod
+ * Copyright (c) 2026 JST
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
+
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@webpack", () => ({
@@ -18,6 +24,7 @@ vi.mock("../db", () => ({
 }));
 
 import { UserStore } from "@webpack/common";
+
 import { DBMessageStatus } from "../db";
 import {
     discordIdToDate,

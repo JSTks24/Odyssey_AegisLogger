@@ -1,4 +1,11 @@
+/*
+ * Vencord, a Discord client mod
+ * Copyright (c) 2026 JST
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
+
 import { describe, expect, it } from "vitest";
+
 import { diffAttachments } from "../utils/attachmentDiff";
 
 const att = (id: string) => ({ id, url: `https://cdn.example/${id}.png` }) as any;

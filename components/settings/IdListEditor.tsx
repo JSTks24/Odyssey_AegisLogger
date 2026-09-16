@@ -5,13 +5,13 @@
  */
 
 import { classNameFactory } from "@utils/css";
-import { ChannelStore, GuildStore, RelationshipStore, TextInput, UserStore, useEffect, useMemo, useState } from "@webpack/common";
+import { ChannelStore, GuildStore, RelationshipStore, TextInput, useEffect, useMemo, UserStore, useState } from "@webpack/common";
 
-import { getDistinctLogEntities } from "../../db";
+import idb from "../../db";
 import { settings } from "../../settings";
-import { addToXAndRemoveFromOpposite, getIdList, removeFromX, ListType } from "../../utils";
-import { MatchCandidate, resolveInput } from "../../utils/idMatch";
+import { addToXAndRemoveFromOpposite, getIdList, ListType,removeFromX } from "../../utils";
 import { t } from "../../utils/i18n";
+import { MatchCandidate, resolveInput } from "../../utils/idMatch";
 import { resolveId } from "./resolveId";
 
 const cl = classNameFactory("aegis-id-");
@@ -72,7 +72,7 @@ function useCandidatePool(ids: string[]) {
             if (channel?.name) push(channelId, channel.name, "channel");
         }
 
-        getDistinctLogEntities()
+        idb.getDistinctLogEntities()
             .then(entities => {
                 for (const author of entities.authors)
                     push(author.id, author.globalName ?? author.username, "user");

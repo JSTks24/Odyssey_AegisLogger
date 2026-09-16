@@ -22,9 +22,9 @@ import { ChannelStore, SelectedChannelStore, UserStore } from "@webpack/common";
 
 import { settings } from "../index";
 import { LoggedMessageJSON } from "../types";
-import { findLastIndex, getGuildIdByChannel } from "./misc";
+import { messageMatchesRules,parseExclusionRules } from "./exclusionRules";
 import { memoize } from "./memoize";
-import { parseExclusionRules, messageMatchesRules } from "./exclusionRules";
+import { findLastIndex, getGuildIdByChannel } from "./misc";
 
 export * from "./cleanUp";
 export * from "./misc";

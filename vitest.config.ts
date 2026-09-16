@@ -1,4 +1,11 @@
+/*
+ * Vencord, a Discord client mod
+ * Copyright (c) 2026 JST
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
+
 import { fileURLToPath } from "node:url";
+
 import { defineConfig } from "vitest/config";
 
 const r = (p: string) => fileURLToPath(new URL(p, import.meta.url));

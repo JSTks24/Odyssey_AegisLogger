@@ -1,3 +1,9 @@
+/*
+ * Vencord, a Discord client mod
+ * Copyright (c) 2026 JST
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
+
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../index", () => ({
@@ -6,10 +12,12 @@ vi.mock("../index", () => ({
 }));
 
 vi.mock("../db", () => ({
-    addMessageIDB: vi.fn(async () => { }),
-    deleteMessagesBulkIDB: vi.fn(async () => { }),
-    getOldestMessagesIDB: vi.fn(async () => []),
-    db: { count: vi.fn(async () => 0) },
+    default: {
+        addMessageIDB: vi.fn(async () => { }),
+        deleteMessagesBulkIDB: vi.fn(async () => { }),
+        getOldestMessagesIDB: vi.fn(async () => []),
+        connection: { count: vi.fn(async () => 0) }
+    },
     DBMessageStatus: {
         DELETED: "DELETED",
         EDITED: "EDITED",
@@ -26,11 +34,11 @@ vi.mock("../utils/saveImage", () => ({
     cacheMessageImages: vi.fn(async () => { })
 }));
 
+import idb, { DBMessageStatus } from "../db";
 import { logger, settings } from "../index";
-import { DBMessageStatus, addMessageIDB, db, deleteMessagesBulkIDB, getOldestMessagesIDB } from "../db";
+import { addMessage } from "../LoggedMessageManager";
 import { contentExcluded } from "../utils";
 import { cacheMessageImages } from "../utils/saveImage";
-import { addMessage } from "../LoggedMessageManager";
 
 function makeMessage(overrides: Record<string, any> = {}) {
     return {
@@ -58,8 +66,8 @@ describe("addMessage", () => {
 
         await addMessage(message, DBMessageStatus.DELETED);
 
-        expect(vi.mocked(addMessageIDB).mock.calls[0][0]).toBe(message);
-        expect(vi.mocked(addMessageIDB).mock.calls[0][1]).toBe(DBMessageStatus.DELETED);
+        expect(vi.mocked(idb.addMessageIDB).mock.calls[0][0]).toBe(message);
+        expect(vi.mocked(idb.addMessageIDB).mock.calls[0][1]).toBe(DBMessageStatus.DELETED);
         expect(contentExcluded).toHaveBeenCalledWith("hello", undefined, "100", "u1");
         expect(vi.mocked(cacheMessageImages)).not.toHaveBeenCalled();
     });
@@ -69,9 +77,9 @@ describe("addMessage", () => {
 
         await addMessage(makeMessage(), DBMessageStatus.DELETED);
 
-        expect(vi.mocked(addMessageIDB)).not.toHaveBeenCalled();
+        expect(vi.mocked(idb.addMessageIDB)).not.toHaveBeenCalled();
         expect(vi.mocked(cacheMessageImages)).not.toHaveBeenCalled();
-        expect(vi.mocked(db.count)).not.toHaveBeenCalled();
+        expect(vi.mocked(idb.connection.count)).not.toHaveBeenCalled();
     });
 
     it("caches images only for deleted messages while saveImages is enabled", async () => {
@@ -95,49 +103,49 @@ describe("addMessage", () => {
     it("never trims the database when messageLimit is 0", async () => {
         await addMessage(makeMessage(), DBMessageStatus.DELETED);
 
-        expect(vi.mocked(db.count)).not.toHaveBeenCalled();
-        expect(vi.mocked(getOldestMessagesIDB)).not.toHaveBeenCalled();
-        expect(vi.mocked(deleteMessagesBulkIDB)).not.toHaveBeenCalled();
+        expect(vi.mocked(idb.connection.count)).not.toHaveBeenCalled();
+        expect(vi.mocked(idb.getOldestMessagesIDB)).not.toHaveBeenCalled();
+        expect(vi.mocked(idb.deleteMessagesBulkIDB)).not.toHaveBeenCalled();
     });
 
     it("deletes exactly the surplus of oldest messages beyond the limit", async () => {
         settings.store.messageLimit = 100;
-        vi.mocked(db.count).mockResolvedValueOnce(150);
-        vi.mocked(getOldestMessagesIDB).mockResolvedValueOnce([
+        vi.mocked(idb.connection.count).mockResolvedValueOnce(150);
+        vi.mocked(idb.getOldestMessagesIDB).mockResolvedValueOnce([
             { message_id: "a" },
             { message_id: "b" }
         ] as any);
 
         await addMessage(makeMessage(), DBMessageStatus.DELETED);
 
-        expect(vi.mocked(getOldestMessagesIDB)).toHaveBeenCalledWith(50);
-        expect(vi.mocked(deleteMessagesBulkIDB)).toHaveBeenCalledTimes(1);
-        expect(vi.mocked(deleteMessagesBulkIDB)).toHaveBeenCalledWith(["a", "b"]);
+        expect(vi.mocked(idb.getOldestMessagesIDB)).toHaveBeenCalledWith(50);
+        expect(vi.mocked(idb.deleteMessagesBulkIDB)).toHaveBeenCalledTimes(1);
+        expect(vi.mocked(idb.deleteMessagesBulkIDB)).toHaveBeenCalledWith(["a", "b"]);
         expect(vi.mocked(logger.info)).toHaveBeenCalledWith("Deleting 50 oldest messages");
     });
 
     it("keeps everything when the count does not exceed the limit", async () => {
         settings.store.messageLimit = 100;
-        vi.mocked(db.count).mockResolvedValueOnce(100);
+        vi.mocked(idb.connection.count).mockResolvedValueOnce(100);
 
         await addMessage(makeMessage(), DBMessageStatus.DELETED);
 
-        expect(vi.mocked(getOldestMessagesIDB)).not.toHaveBeenCalled();
-        expect(vi.mocked(deleteMessagesBulkIDB)).not.toHaveBeenCalled();
+        expect(vi.mocked(idb.getOldestMessagesIDB)).not.toHaveBeenCalled();
+        expect(vi.mocked(idb.deleteMessagesBulkIDB)).not.toHaveBeenCalled();
     });
 
     it("refuses to delete as many messages as the limit in one sweep", async () => {
         settings.store.messageLimit = 100;
-        vi.mocked(db.count).mockResolvedValueOnce(200);
+        vi.mocked(idb.connection.count).mockResolvedValueOnce(200);
 
         await addMessage(makeMessage(), DBMessageStatus.DELETED);
 
-        expect(vi.mocked(getOldestMessagesIDB)).not.toHaveBeenCalled();
-        expect(vi.mocked(deleteMessagesBulkIDB)).not.toHaveBeenCalled();
+        expect(vi.mocked(idb.getOldestMessagesIDB)).not.toHaveBeenCalled();
+        expect(vi.mocked(idb.deleteMessagesBulkIDB)).not.toHaveBeenCalled();
     });
 
     it("propagates storage failures", async () => {
-        vi.mocked(addMessageIDB).mockRejectedValueOnce(new Error("quota exceeded"));
+        vi.mocked(idb.addMessageIDB).mockRejectedValueOnce(new Error("quota exceeded"));
 
         await expect(addMessage(makeMessage(), DBMessageStatus.DELETED)).rejects.toThrow("quota exceeded");
     });

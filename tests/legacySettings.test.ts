@@ -1,3 +1,9 @@
+/*
+ * Vencord, a Discord client mod
+ * Copyright (c) 2026 JST
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
+
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const state = vi.hoisted(() => ({
@@ -14,6 +20,7 @@ vi.mock("../settings", () => ({
 }));
 
 import { Settings } from "@api/Settings";
+
 import { applyLegacyPluginSettings, mapLegacyPluginSettings } from "../utils/legacySettings";
 
 const LEGACY_BLOCK: Record<string, unknown> = {

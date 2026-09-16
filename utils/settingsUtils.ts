@@ -20,7 +20,7 @@ import { chooseFile as chooseFileWeb } from "@utils/web";
 import { Toasts } from "@webpack/common";
 
 import { Native } from "..";
-import { addMessagesBulkIDB, getAllMessageIdsIDB, iterateAllMessagesIDB } from "../db";
+import idb from "../db";
 import { LoggedMessageJSON } from "../types";
 import { t } from "./i18n";
 
@@ -32,13 +32,13 @@ export async function importLogs() {
 
     const flushBatch = async () => {
         if (batch.length === 0) return;
-        await addMessagesBulkIDB(batch);
+        await idb.addMessagesBulkIDB(batch);
         count += batch.length;
         batch = [];
     };
 
     try {
-        const existing = new Set(await getAllMessageIdsIDB());
+        const existing = new Set(await idb.getAllMessageIdsIDB());
 
         for await (const item of iterateLogItems()) {
             const message = item.message || item;
@@ -102,7 +102,7 @@ export async function exportLogs() {
             await Native.writeNativeLogChunk(streamId, '{\n  "messages": [\n');
 
             let first = true;
-            for await (const record of iterateAllMessagesIDB()) {
+            for await (const record of idb.iterateAllMessagesIDB()) {
                 const prefix = first ? "" : ",\n";
                 first = false;
 
@@ -141,7 +141,7 @@ export async function exportLogs() {
 
             let first = true;
             let count = 0;
-            for await (const records of iterateAllMessagesIDB()) {
+            for await (const records of idb.iterateAllMessagesIDB()) {
                 const prefix = first ? "" : ",\n";
                 first = false;
                 const chunk = prefix + "    " + JSON.stringify(records);

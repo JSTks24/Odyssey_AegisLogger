@@ -1,6 +1,13 @@
+/*
+ * Vencord, a Discord client mod
+ * Copyright (c) 2026 JST
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
+
 import { readdirSync, readFileSync } from "node:fs";
 import { join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
+
 import { describe, expect, it } from "vitest";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
@@ -28,8 +35,9 @@ const DYNAMIC_KEYS = [
     "filter.pick.user",
     "filter.pick.server",
     "filter.pick.channel",
-    "filter.pickPlaceholder",
-    "filter.apply",
+    "filter.pickGroup.user",
+    "filter.pickGroup.server",
+    "filter.pickGroup.channel",
     "filter.addFilter",
     "filter.exclude",
     "has.attachment",

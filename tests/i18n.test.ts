@@ -1,3 +1,9 @@
+/*
+ * Vencord, a Discord client mod
+ * Copyright (c) 2026 JST
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
+
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const { mockStore } = vi.hoisted(() => ({ mockStore: { language: "auto" } as Record<string, string> }));

@@ -4,10 +4,9 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
+import { DATA_DIR } from "@main/utils/constants";
 import fs from "fs/promises";
 import path from "path";
-
-import { DATA_DIR } from "@main/utils/constants";
 
 import { getDefaultNativeDataDir, getDefaultNativeImageDir } from ".";
 import { ensureDirectoryExists } from "./utils";

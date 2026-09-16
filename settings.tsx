@@ -4,15 +4,15 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
+import { definePluginSettings, Settings } from "@api/Settings";
 import { Button } from "@components/Button";
 import ErrorBoundary from "@components/ErrorBoundary";
-import { definePluginSettings, Settings } from "@api/Settings";
 import { OptionType } from "@utils/types";
 import { Alerts, Toasts, useState } from "@webpack/common";
 
 import { logger, Native } from ".";
 import { ClearLogsButton } from "./components/ClearLogsButton";
-import { openLogModal } from "./components/LogsModal";
+import logsModal from "./components/LogsModal";
 import { ExclusionRulesEditor } from "./components/settings/ExclusionRulesEditor";
 import { ExtensionToggles } from "./components/settings/ExtensionToggles";
 import { ImageCacheDir, LogsDir } from "./components/settings/FolderSelectInput";
@@ -22,7 +22,7 @@ import { NumberInput } from "./components/settings/NumberInput";
 import { SectionHeader } from "./components/settings/SectionHeader";
 import { DEFAULT_IMAGE_CACHE_DIR } from "./utils/constants";
 import { t } from "./utils/i18n";
-import { countLegacyRemaining, clearLegacyLogs, isLegacyDbCleared, legacyDbExists, migrateLegacyImages, migrateLegacyLogs } from "./utils/migration";
+import { clearLegacyLogs, countLegacyRemaining, isLegacyDbCleared, legacyDbExists, migrateLegacyImages, migrateLegacyLogs } from "./utils/migration";
 import { exportLogs, importLogs } from "./utils/settingsUtils";
 
 function ImportLogsButton() {
@@ -259,7 +259,7 @@ export const settings = definePluginSettings({
         type: OptionType.COMPONENT,
         get description() { return t("settings.openLogsDesc"); },
         component: labeled(() => (
-            <Button onClick={() => openLogModal()}>
+            <Button onClick={() => logsModal.openLogModal()}>
                 {t("settings.openLogs")}
             </Button>
         ))

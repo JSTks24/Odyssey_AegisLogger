@@ -1,19 +1,28 @@
+/*
+ * Vencord, a Discord client mod
+ * Copyright (c) 2026 JST
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
+
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("@utils/web", () => ({ chooseFile: vi.fn(async () => null) }));
 vi.mock("../index", () => ({ Native: {} }));
 vi.mock("../db", () => ({
-    addMessagesBulkIDB: vi.fn(async () => { }),
-    getAllMessageIdsIDB: vi.fn(async () => []),
-    iterateAllMessagesIDB: vi.fn(() => { })
+    default: {
+        addMessagesBulkIDB: vi.fn(async () => { }),
+        getAllMessageIdsIDB: vi.fn(async () => []),
+        iterateAllMessagesIDB: vi.fn(() => { })
+    }
 }));
 vi.mock("../utils/i18n", () => ({ t: (key: string, params?: Record<string, any>) => key }));
 
 vi.stubGlobal("IS_WEB", true);
 
-import { Toasts } from "@webpack/common";
 import { chooseFile } from "@utils/web";
-import { addMessagesBulkIDB, getAllMessageIdsIDB } from "../db";
+import { Toasts } from "@webpack/common";
+
+import idb from "../db";
 import { importLogs } from "../utils/settingsUtils";
 
 function makeMessage(id: string) {
@@ -51,9 +60,9 @@ function makeStreamFile(chunks: string[]): any {
 beforeEach(() => {
     vi.stubGlobal("IS_WEB", true);
     vi.spyOn(console, "error").mockImplementation(() => { });
-    vi.mocked(addMessagesBulkIDB).mockClear();
-    vi.mocked(getAllMessageIdsIDB).mockReset();
-    vi.mocked(getAllMessageIdsIDB).mockResolvedValue([]);
+    vi.mocked(idb.addMessagesBulkIDB).mockClear();
+    vi.mocked(idb.getAllMessageIdsIDB).mockReset();
+    vi.mocked(idb.getAllMessageIdsIDB).mockResolvedValue([]);
     vi.mocked(Toasts.show).mockClear();
     vi.mocked(chooseFile).mockReset();
 });
@@ -64,8 +73,8 @@ describe("importLogs", () => {
 
         await importLogs();
 
-        expect(addMessagesBulkIDB).toHaveBeenCalledTimes(1);
-        const batch = vi.mocked(addMessagesBulkIDB).mock.calls[0][0];
+        expect(idb.addMessagesBulkIDB).toHaveBeenCalledTimes(1);
+        const batch = vi.mocked(idb.addMessagesBulkIDB).mock.calls[0][0];
         expect(batch.map(m => m.id)).toEqual(["1", "2", "3"]);
         expect(batch.length).toBeLessThanOrEqual(50);
         expect(Toasts.show).toHaveBeenCalledTimes(1);
@@ -78,7 +87,7 @@ describe("importLogs", () => {
 
         await importLogs();
 
-        expect(vi.mocked(addMessagesBulkIDB).mock.calls.map(call => call[0].length)).toEqual([50, 50, 20]);
+        expect(vi.mocked(idb.addMessagesBulkIDB).mock.calls.map(call => call[0].length)).toEqual([50, 50, 20]);
         expect(Toasts.show).toHaveBeenCalledWith(expect.objectContaining({ type: "SUCCESS" }));
     });
 
@@ -87,7 +96,7 @@ describe("importLogs", () => {
 
         await importLogs();
 
-        expect(vi.mocked(addMessagesBulkIDB).mock.calls[0][0].map(m => m.id)).toEqual(["1", "2"]);
+        expect(vi.mocked(idb.addMessagesBulkIDB).mock.calls[0][0].map(m => m.id)).toEqual(["1", "2"]);
         expect(Toasts.show).toHaveBeenCalledWith(expect.objectContaining({ type: "SUCCESS" }));
     });
 
@@ -102,27 +111,27 @@ describe("importLogs", () => {
 
         await importLogs();
 
-        expect(vi.mocked(addMessagesBulkIDB).mock.calls[0][0].map(m => m.id)).toEqual(["1", "4"]);
+        expect(vi.mocked(idb.addMessagesBulkIDB).mock.calls[0][0].map(m => m.id)).toEqual(["1", "4"]);
         expect(Toasts.show).toHaveBeenCalledWith(expect.objectContaining({ type: "SUCCESS" }));
     });
 
     it("skips messages whose ids already exist in the database", async () => {
-        vi.mocked(getAllMessageIdsIDB).mockResolvedValue(["1", "2"]);
+        vi.mocked(idb.getAllMessageIdsIDB).mockResolvedValue(["1", "2"]);
         vi.mocked(chooseFile).mockResolvedValue(makeFile([makeMessage("1"), makeMessage("2"), makeMessage("3")]) as any);
 
         await importLogs();
 
-        expect(vi.mocked(addMessagesBulkIDB).mock.calls[0][0].map(m => m.id)).toEqual(["3"]);
+        expect(vi.mocked(idb.addMessagesBulkIDB).mock.calls[0][0].map(m => m.id)).toEqual(["3"]);
         expect(Toasts.show).toHaveBeenCalledWith(expect.objectContaining({ message: "import.success import.duplicates", type: "SUCCESS" }));
     });
 
     it("shows a failure toast without writing when every message is a duplicate", async () => {
-        vi.mocked(getAllMessageIdsIDB).mockResolvedValue(["1", "2"]);
+        vi.mocked(idb.getAllMessageIdsIDB).mockResolvedValue(["1", "2"]);
         vi.mocked(chooseFile).mockResolvedValue(makeFile([makeMessage("1"), makeMessage("2")]) as any);
 
         await importLogs();
 
-        expect(addMessagesBulkIDB).not.toHaveBeenCalled();
+        expect(idb.addMessagesBulkIDB).not.toHaveBeenCalled();
         expect(Toasts.show).toHaveBeenCalledWith(expect.objectContaining({ message: "import.allDuplicates", type: "FAILURE" }));
     });
 
@@ -133,7 +142,7 @@ describe("importLogs", () => {
 
         await importLogs();
 
-        expect(vi.mocked(addMessagesBulkIDB).mock.calls.map(call => call[0].length)).toEqual([50, 10]);
+        expect(vi.mocked(idb.addMessagesBulkIDB).mock.calls.map(call => call[0].length)).toEqual([50, 10]);
         expect(Toasts.show).toHaveBeenCalledWith(expect.objectContaining({ message: "import.failed", type: "FAILURE" }));
     });
 
@@ -142,7 +151,7 @@ describe("importLogs", () => {
 
         await importLogs();
 
-        expect(addMessagesBulkIDB).not.toHaveBeenCalled();
+        expect(idb.addMessagesBulkIDB).not.toHaveBeenCalled();
         expect(Toasts.show).toHaveBeenCalledWith(expect.objectContaining({ message: "import.none", type: "FAILURE" }));
     });
 });

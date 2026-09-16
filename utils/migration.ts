@@ -4,9 +4,9 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
-import { addMessageRecordsIDB, DBMessageRecord, DBMessageStatus, getAllMessageIdsIDB } from "../db";
-import { getMessageStatus } from "./index";
+import idb, { DBMessageRecord, DBMessageStatus } from "../db";
 import { DEFAULT_IMAGE_CACHE_DIR } from "./constants";
+import { getMessageStatus } from "./index";
 
 const LEGACY_DB_NAME = "MessageLoggerIDB";
 const LEGACY_IMAGE_DB_NAME = "MessageLoggerImageData";
@@ -78,7 +78,7 @@ export async function migrateLegacyLogs(): Promise<MigrationResult> {
     const result: MigrationResult = { migrated: 0, duplicates: 0, invalid: 0 };
     if (!await legacyDbExists()) return result;
 
-    const existing = new Set(await getAllMessageIdsIDB());
+    const existing = new Set(await idb.getAllMessageIdsIDB());
 
     for await (const chunk of iterateLegacyChunks()) {
         const eligible: DBMessageRecord[] = [];
@@ -100,7 +100,7 @@ export async function migrateLegacyLogs(): Promise<MigrationResult> {
         }
 
         if (eligible.length) {
-            await addMessageRecordsIDB(eligible);
+            await idb.addMessageRecordsIDB(eligible);
             result.migrated += eligible.length;
         }
 
@@ -115,7 +115,7 @@ export async function migrateLegacyLogs(): Promise<MigrationResult> {
 export async function countLegacyRemaining(): Promise<number> {
     if (!await legacyDbExists()) return 0;
 
-    const existing = new Set(await getAllMessageIdsIDB());
+    const existing = new Set(await idb.getAllMessageIdsIDB());
     let remaining = 0;
 
     for await (const chunk of iterateLegacyChunks()) {

@@ -11,7 +11,7 @@
             "@webpack/common": ["../../../SourceCode/Vencord/src/webpack/common"],
             "@webpack/common/*": ["../../../SourceCode/Vencord/src/webpack/common/*"],
             "@webpack/patcher": ["../../../SourceCode/Vencord/src/webpack/patchWebpack"],
-            "@vencord/discord-types": ["../../../SourceCode/Vencord/packages/discord-types/index.d.ts"]
+            "@vencord/discord-types": ["../../../SourceCode/Vencord/packages/discord-types/src/index.d.ts"]
         },
         "jsx": "react",
         "lib": ["ESNext", "DOM"],

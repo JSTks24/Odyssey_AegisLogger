@@ -178,14 +178,71 @@
     position: relative;
 }
 
+.aegis-modal-search-box {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+    width: 100%;
+    padding: 8px 10px;
+    border-radius: 8px;
+    background: var(--background-base-lowest, rgba(0, 0, 0, 0.05));
+    border: 1px solid transparent;
+    cursor: text;
+    box-sizing: border-box;
+}
+
+.aegis-modal-search-box:focus-within {
+    border-color: var(--interactive-accent, #5865f2);
+}
+
+.aegis-modal-search-input {
+    flex: 1;
+    min-width: 60px;
+    background: transparent;
+    border: none;
+    outline: none;
+    color: var(--text-default);
+    font-size: 14px;
+    padding: 0;
+}
+
+.aegis-modal-search-token {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 13px;
+    font-weight: 600;
+    background: color-mix(in srgb, var(--interactive-accent, #5865f2) 15%, transparent);
+    color: var(--text-link, #00a8fc);
+    user-select: none;
+}
+
+.aegis-modal-search-token b {
+    font-weight: 700;
+}
+
+.aegis-modal-search-token-active {
+    background: color-mix(in srgb, var(--interactive-accent, #5865f2) 25%, transparent);
+}
+
+.aegis-modal-overlay-closing {
+    opacity: 0 !important;
+    pointer-events: none !important;
+}
+
 .aegis-modal-filter-panel {
     position: fixed;
+    transition: opacity 120ms ease;
     display: flex;
     flex-direction: column;
-    padding: 6px;
+    gap: 2px;
+    padding: 8px;
     background: var(--background-base-low, #fff);
     border: 1px solid var(--background-base-lowest, rgba(0, 0, 0, 0.1));
-    border-radius: 8px;
+    border-radius: 12px;
     box-shadow: var(--shadow-high, 0 8px 16px rgba(0, 0, 0, 0.24));
     max-height: 320px;
     overflow-y: auto;
@@ -196,9 +253,8 @@
 .aegis-modal-filter-panel-title {
     color: var(--text-muted);
     font-size: 12px;
-    font-weight: 700;
-    text-transform: uppercase;
-    padding: 4px 10px 2px;
+    font-weight: 600;
+    padding: 4px 8px 6px;
 }
 
 .aegis-modal-filter-item-text {
@@ -210,8 +266,8 @@
 
 .aegis-modal-filter-item-main {
     color: var(--text-default);
-    font-size: 14px;
-    font-weight: 500;
+    font-size: 15px;
+    font-weight: 600;
 }
 
 .aegis-modal-filter-item-sub {
@@ -228,48 +284,169 @@
     opacity: 0.7;
 }
 
-.aegis-modal-pick-input {
-    background: var(--background-base-lowest, #f2f2f2);
-    border: 1px solid transparent;
-    border-radius: 4px;
-    color: var(--text-default, #000);
-    padding: 7px 8px;
-    font-size: 14px;
-    margin-bottom: 2px;
-    box-sizing: border-box;
-    outline: none;
+.aegis-modal-date-section {
+    padding: 10px 8px 12px;
 }
 
-.aegis-modal-pick-input:focus {
+.aegis-modal-date-label {
+    color: var(--text-default);
+    font-size: 16px;
+    font-weight: 500;
+}
+
+.aegis-modal-date-hint {
+    color: var(--text-muted);
+    font-size: 14px;
+    margin-top: 2px;
+}
+
+.aegis-modal-date-add {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    width: 100%;
+    margin-top: 10px;
+    box-sizing: border-box;
+}
+
+.aegis-modal-date-row {
+    display: grid;
+    grid-template-columns: 108px 1fr 36px;
+    gap: 8px;
+    align-items: center;
+    margin-top: 10px;
+}
+
+.aegis-modal-date-type,
+.aegis-modal-date-field {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    height: 36px;
+    padding: 0 10px;
+    box-sizing: border-box;
+    border-radius: 8px;
+    background: var(--background-base-lowest, rgba(0, 0, 0, 0.05));
+    border: 1px solid var(--background-modifier-accent, rgba(0, 0, 0, 0.1));
+    color: var(--text-default);
+    font-size: 16px;
+    cursor: pointer;
+}
+
+.aegis-modal-date-type:hover,
+.aegis-modal-date-field:hover {
     border-color: var(--interactive-accent, #5865f2);
 }
 
-.aegis-modal-filter-actions {
+.aegis-modal-date-type-value,
+.aegis-modal-date-field-value {
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+}
+
+.aegis-modal-date-type svg,
+.aegis-modal-date-field svg {
+    flex-shrink: 0;
+    color: var(--interactive-normal);
+}
+
+.aegis-modal-calendar {
+    position: fixed;
+    transition: opacity 120ms ease;
+    z-index: 3010;
+    padding: 8px;
+    box-sizing: border-box;
+    background: var(--background-base-low, #fff);
+    border: 1px solid var(--background-base-lowest, rgba(0, 0, 0, 0.1));
+    border-radius: 12px;
+    box-shadow: var(--shadow-high, 0 8px 16px rgba(0, 0, 0, 0.24));
+    pointer-events: auto;
+    user-select: none;
+}
+
+.aegis-modal-calendar-head {
     display: flex;
-    gap: 6px;
-    padding: 6px 4px 2px;
+    align-items: center;
+    justify-content: space-between;
+    gap: 4px;
+    padding-bottom: 6px;
+    margin-bottom: 6px;
+    border-bottom: 1px solid var(--primary-200, rgba(0, 0, 0, 0.1));
 }
 
-.aegis-modal-filter-btn {
-    all: unset;
-    cursor: pointer;
-    background: var(--brand-500, #5865f2);
-    color: #fff;
-    border-radius: 4px;
-    padding: 6px 14px;
-    font-size: 14px;
+.aegis-modal-calendar-title {
+    color: var(--text-strong, var(--text-default));
+    font-size: 13px;
     font-weight: 600;
+}
+
+.aegis-modal-calendar-nav {
+    all: unset;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    height: 20px;
+    border-radius: 4px;
+    color: var(--interactive-normal);
+    cursor: pointer;
+}
+
+.aegis-modal-calendar-nav:hover {
+    color: var(--interactive-hover, var(--text-default));
+    background: var(--background-modifier-hover, rgba(0, 0, 0, 0.08));
+}
+
+.aegis-modal-calendar-weekdays,
+.aegis-modal-calendar-grid {
+    display: grid;
+    grid-template-columns: repeat(7, 1fr);
+}
+
+.aegis-modal-calendar-weekday {
+    color: var(--text-muted);
+    font-size: 12px;
     text-align: center;
+    padding-bottom: 4px;
 }
 
-.aegis-modal-filter-btn:disabled {
-    opacity: 0.5;
-    cursor: default;
-}
-
-.aegis-modal-filter-btn-secondary {
-    background: var(--background-secondary);
+.aegis-modal-calendar-day {
+    all: unset;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 30px;
+    border-radius: 5px;
+    border-bottom: 1px solid var(--primary-200, rgba(0, 0, 0, 0.06));
+    box-sizing: border-box;
     color: var(--text-default);
+    font-size: 13px;
+    cursor: pointer;
+}
+
+.aegis-modal-calendar-day:hover {
+    background: var(--background-modifier-hover, rgba(0, 0, 0, 0.08));
+}
+
+.aegis-modal-calendar-day-outside {
+    color: var(--text-muted);
+}
+
+.aegis-modal-calendar-day-today {
+    font-weight: 700;
+}
+
+.aegis-modal-calendar-day-selected {
+    background: var(--brand-500, var(--interactive-accent, #5865f2));
+    color: #fff;
+    font-weight: 600;
+}
+
+.aegis-modal-calendar-day-selected:hover {
+    background: var(--brand-560, var(--brand-500, #5865f2));
 }
 
 .aegis-modal-filter-panel-divider {
@@ -281,9 +458,11 @@
 .aegis-modal-filter-item {
     display: flex;
     align-items: center;
-    gap: 10px;
-    padding: 7px 10px;
-    border-radius: 4px;
+    gap: 12px;
+    padding: 6px 8px;
+    min-height: 44px;
+    box-sizing: border-box;
+    border-radius: 8px;
     font-size: 14px;
     color: var(--text-default);
     cursor: pointer;
@@ -299,8 +478,16 @@
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 20px;
+    width: 24px;
+    flex-shrink: 0;
     color: var(--interactive-normal);
+}
+
+.aegis-modal-panel-entity-icon {
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    object-fit: cover;
 }
 
 .aegis-modal-filter-chip-key {
@@ -317,17 +504,6 @@
 
 .aegis-modal-filter-chip-editable:hover {
     text-decoration: underline;
-}
-
-.aegis-modal-date-input {
-    width: 100%;
-    background: var(--background-base-lowest, #f2f2f2);
-    border: 1px solid transparent;
-    border-radius: 4px;
-    color: var(--text-default, #000);
-    padding: 8px;
-    font-size: 14px;
-    box-sizing: border-box;
 }
 
 .aegis-settings-section {

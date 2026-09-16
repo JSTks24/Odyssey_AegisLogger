@@ -4,11 +4,106 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
-import { useEffect, useState } from "@webpack/common";
+import { useCallback, useEffect, useState } from "@webpack/common";
 
-import { countMessagesByStatusIDB, countMessagesIDB, DBMessageRecord, DBMessageStatus, getDateStortedMessagesByStatusIDB } from "../db";
-import { doesMatch, tokenizeQuery } from "../utils/parseQuery";
+import idb, { DBMessageRecord, DBMessageStatus } from "../db";
+import { tokenizeQuery } from "../utils/parseQuery";
+import searchIndex from "../utils/searchIndex";
 import { LogTabs } from "./LogsModal";
+
+function useMessages(query: string, currentTab: LogTabs, sortNewest: boolean, numDisplayedMessages: number) {
+    const [pending, setPending] = useState(true);
+    const [messages, setMessages] = useState<DBMessageRecord[]>([]);
+    const [statusTotal, setStatusTotal] = useState<number>(0);
+    const [total, setTotal] = useState<number>(0);
+
+    const debouncedQuery = useDebouncedValue(query, 300);
+
+    useEffect(() => {
+        idb.countMessagesIDB().then(x => setTotal(x));
+    }, [pending]);
+
+    useEffect(() => {
+        let isMounted = true;
+
+        const loadMessages = async () => {
+            const status = getStatus(currentTab);
+
+            if (debouncedQuery === "") {
+                const [messages, statusTotal] = await Promise.all([
+                    idb.getDateStortedMessagesByStatusIDB(sortNewest, numDisplayedMessages, status),
+                    idb.countMessagesByStatusIDB(status),
+                ]);
+
+
+                if (isMounted) {
+                    setMessages(messages);
+                    setStatusTotal(statusTotal);
+                }
+
+                setPending(false);
+            } else {
+                const { queries, rest } = tokenizeQuery(debouncedQuery);
+                let matchedTotal: number;
+
+                if (searchIndex.isReady()) {
+                    const { page: hits, total } = searchIndex.search(queries, rest, status, numDisplayedMessages, sortNewest);
+                    const records = await idb.getMessagesByIDsIDB(hits.map(entry => entry.id));
+
+                    matchedTotal = total;
+
+                    if (isMounted) {
+                        setMessages(await idb.hydrateRecords(records));
+                        setStatusTotal(matchedTotal);
+                    }
+                } else {
+                    const matched: DBMessageRecord[] = [];
+                    let hasMore = false;
+
+                    for await (const batch of idb.iterateRawMessagesByStatusIDB(status, sortNewest)) {
+                        for (const record of batch) {
+                            if (!searchIndex.matchesRecord(record, queries, rest)) continue;
+
+                            if (matched.length < numDisplayedMessages) {
+                                matched.push(record);
+                            } else {
+                                hasMore = true;
+                                break;
+                            }
+                        }
+
+                        if (hasMore) break;
+                    }
+
+                    matchedTotal = matched.length + (hasMore ? 1 : 0);
+
+                    if (isMounted) {
+                        setMessages(await idb.hydrateRecords(matched));
+                        setStatusTotal(matchedTotal);
+                    }
+                }
+
+                setPending(false);
+            }
+        };
+
+        loadMessages();
+
+        return () => {
+            isMounted = false;
+        };
+
+    }, [debouncedQuery, sortNewest, numDisplayedMessages, currentTab, pending]);
+
+
+    return { messages, statusTotal, total, pending, reset: useCallback(() => setPending(true), []) };
+}
+
+const hooks = {
+    useMessages,
+};
+
+export default hooks;
 
 function useDebouncedValue<T>(value: T, delay: number): T {
     const [debouncedValue, setDebouncedValue] = useState(value);
@@ -25,75 +120,6 @@ function useDebouncedValue<T>(value: T, delay: number): T {
 
     return debouncedValue;
 }
-
-export function useMessages(query: string, currentTab: LogTabs, sortNewest: boolean, numDisplayedMessages: number) {
-    const [pending, setPending] = useState(true);
-    const [messages, setMessages] = useState<DBMessageRecord[]>([]);
-    const [statusTotal, setStatusTotal] = useState<number>(0);
-    const [total, setTotal] = useState<number>(0);
-
-    const debouncedQuery = useDebouncedValue(query, 300);
-
-    useEffect(() => {
-        countMessagesIDB().then(x => setTotal(x));
-    }, [pending]);
-
-    useEffect(() => {
-        let isMounted = true;
-
-        const loadMessages = async () => {
-            const status = getStatus(currentTab);
-
-            if (debouncedQuery === "") {
-                const [messages, statusTotal] = await Promise.all([
-                    getDateStortedMessagesByStatusIDB(sortNewest, numDisplayedMessages, status),
-                    countMessagesByStatusIDB(status),
-                ]);
-
-
-                if (isMounted) {
-                    setMessages(messages);
-                    setStatusTotal(statusTotal);
-                }
-
-                setPending(false);
-            } else {
-                const allMessages = await getDateStortedMessagesByStatusIDB(sortNewest, Number.MAX_SAFE_INTEGER, status);
-                const { queries, rest } = tokenizeQuery(debouncedQuery);
-
-                const filteredMessages = allMessages.filter(record => {
-                    for (const query of queries) {
-                        const matching = doesMatch(query.key, query.value, record.message);
-                        if (query.negate ? matching : !matching) {
-                            return false;
-                        }
-                    }
-
-                    return rest.every(r =>
-                        record.message.content.toLowerCase().includes(r.toLowerCase())
-                    );
-                });
-
-                if (isMounted) {
-                    setMessages(filteredMessages);
-                    setStatusTotal(Number.MAX_SAFE_INTEGER);
-                }
-                setPending(false);
-            }
-        };
-
-        loadMessages();
-
-        return () => {
-            isMounted = false;
-        };
-
-    }, [debouncedQuery, sortNewest, numDisplayedMessages, currentTab, pending]);
-
-
-    return { messages, statusTotal, total, pending, reset: () => setPending(true) };
-}
-
 
 function getStatus(currentTab: LogTabs) {
     switch (currentTab) {

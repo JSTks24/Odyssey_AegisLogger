@@ -1,3 +1,9 @@
+/*
+ * Vencord, a Discord client mod
+ * Copyright (c) 2026 JST
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
+
 import "fake-indexeddb/auto";
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -19,19 +25,16 @@ vi.mock("../db", async importOriginal => {
     const actual = await importOriginal<typeof import("../db")>();
     return {
         ...actual,
-        addMessageRecordsIDB: vi.fn(actual.addMessageRecordsIDB)
+        default: {
+            ...actual.default,
+            addMessageRecordsIDB: vi.fn(actual.default.addMessageRecordsIDB)
+        }
     };
 });
 
-import {
-    addMessageRecordsIDB,
-    clearMessagesIDB,
-    countMessagesIDB,
-    dbReady,
-    getAllMessageIdsIDB,
-    getMessageIDB
-} from "../db";
-import { addMessageRecordsIDB as addRecordSpy } from "../db";
+import idb from "../db";
+
+const addRecordSpy = idb.addMessageRecordsIDB;
 import {
     clearLegacyLogs,
     countLegacyRemaining,
@@ -147,8 +150,8 @@ async function readImageStore() {
 
 beforeEach(async () => {
     vi.mocked(addRecordSpy).mockClear();
-    await dbReady;
-    await clearMessagesIDB();
+    await idb.dbReady;
+    await idb.clearMessagesIDB();
     await deleteLegacyDb();
 });
 
@@ -167,9 +170,9 @@ describe("migrateLegacyLogs", () => {
 
         expect(result.migrated).toBe(3);
         expect(result.duplicates).toBe(0);
-        expect(await countMessagesIDB()).toBe(3);
+        expect(await idb.countMessagesIDB()).toBe(3);
 
-        const record = await getMessageIDB("2");
+        const record = await idb.getMessageIDB("2");
         expect(record!.status).toBe("DELETED");
         expect(record!.message.content).toBe("legacy-2");
     });
@@ -183,7 +186,7 @@ describe("migrateLegacyLogs", () => {
         expect(first.migrated).toBe(2);
         expect(second.migrated).toBe(0);
         expect(second.duplicates).toBe(2);
-        expect(await countMessagesIDB()).toBe(2);
+        expect(await idb.countMessagesIDB()).toBe(2);
     });
 
     it("chunks large databases beyond the 2000 batch size", async () => {
@@ -193,7 +196,7 @@ describe("migrateLegacyLogs", () => {
         const result = await migrateLegacyLogs();
 
         expect(result.migrated).toBe(5000);
-        expect(await countMessagesIDB()).toBe(5000);
+        expect(await idb.countMessagesIDB()).toBe(5000);
         expect(vi.mocked(addRecordSpy).mock.calls.map(call => call[0].length)).toEqual([2000, 2000, 1000]);
     });
 
@@ -203,7 +206,7 @@ describe("migrateLegacyLogs", () => {
         const result = await migrateLegacyLogs();
 
         expect(result.migrated).toBe(0);
-        expect(await countMessagesIDB()).toBe(0);
+        expect(await idb.countMessagesIDB()).toBe(0);
     });
 
     it("skips unusable records without aborting usable ones", async () => {
@@ -217,7 +220,7 @@ describe("migrateLegacyLogs", () => {
 
         expect(result.migrated).toBe(1);
         expect(result.invalid).toBe(2);
-        expect(await getAllMessageIdsIDB()).toEqual(["10"]);
+        expect(await idb.getAllMessageIdsIDB()).toEqual(["10"]);
     });
 
     it("keeps already written chunks when a chunk write fails mid-way, and rerun finishes the job", async () => {
@@ -230,19 +233,19 @@ describe("migrateLegacyLogs", () => {
             .mockImplementationOnce(async () => { throw new Error("quota exceeded"); });
 
         await expect(migrateLegacyLogs()).rejects.toThrow("quota exceeded");
-        expect(await countMessagesIDB()).toBe(2000);
+        expect(await idb.countMessagesIDB()).toBe(2000);
 
         const result = await migrateLegacyLogs();
         expect(result.migrated).toBe(2000);
         expect(result.duplicates).toBe(2000);
-        expect(await countMessagesIDB()).toBe(4000);
+        expect(await idb.countMessagesIDB()).toBe(4000);
     });
 });
 
 describe("countLegacyRemaining", () => {
     it("counts legacy records that are not yet in the new database", async () => {
         await seedLegacyDb([makeLegacyRecord("1"), makeLegacyRecord("2"), makeLegacyRecord("3")]);
-        await addMessageRecordsIDB([makeLegacyRecord("1")]);
+        await idb.addMessageRecordsIDB([makeLegacyRecord("1")]);
 
         expect(await countLegacyRemaining()).toBe(2);
     });

@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
-import { useEffect, useState, TextInput } from "@webpack/common";
+import { TextInput,useEffect, useState } from "@webpack/common";
 
 interface NumberInputProps {
     value: number;

@@ -18,8 +18,8 @@
 
 import { findComponentByCodeLazy } from "@webpack";
 
-import { openLogModal } from "./LogsModal";
 import { t } from "../utils/i18n";
+import logsModal from "./LogsModal";
 
 const HeaderBarIcon = findComponentByCodeLazy(".HEADER_BAR_BADGE_BOTTOM,", 'position:"bottom"');
 
@@ -50,7 +50,7 @@ export function OpenLogsButton() {
     return (
         <HeaderBarIcon
             className="aegis-log-btn"
-            onClick={() => openLogModal()}
+            onClick={() => logsModal.openLogModal()}
             tooltip={t("button.openLogs")}
             icon={OpenLogsIcon}
         />

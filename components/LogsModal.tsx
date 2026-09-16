@@ -11,21 +11,22 @@ import { Flex } from "@components/Flex";
 import { InfoIcon } from "@components/Icons";
 import { Link } from "@components/Link";
 import { copyWithToast, openUserProfile } from "@utils/discord";
-import { closeAllModals, ModalContent, ModalFooter, ModalHeader, ModalProps, ModalRoot, ModalSize, openModal } from "@utils/modal";
+import { ModalContent, ModalFooter, ModalHeader, ModalRoot, ModalSize, openModal } from "@utils/modal";
 import { LazyComponent } from "@utils/react";
-import type { Channel, User } from "@vencord/discord-types";
-import { find, findByCodeLazy } from "@webpack";
+import type { Channel, RenderModalProps, User } from "@vencord/discord-types";
+import { filters, find, findByPropsLazy, waitFor } from "@webpack";
 import { Alerts, ChannelStore, ContextMenuApi, FluxDispatcher, GuildMemberStore, GuildStore, Menu, NavigationRouter, React, TabBar, Tooltip, useEffect, useMemo, useRef, useState } from "@webpack/common";
 
-import { DBMessageRecord, deleteMessageIDB, deleteMessagesBulkIDB } from "../db";
+import idb, { DBMessageRecord } from "../db";
 import { settings } from "../index";
 import { LoggedMessage, LoggedMessageJSON } from "../types";
 import { getGuildIdByChannel, messageJsonToMessageClass } from "../utils";
 import { t, tabDisplayName } from "../utils/i18n";
+import searchIndex from "../utils/searchIndex";
 import { importLogs } from "../utils/settingsUtils";
 import { ClearLogsButton } from "./ClearLogsButton";
-import { FilterBar } from "./LogsFilterBar";
-import { useMessages } from "./hooks";
+import hooks from "./hooks";
+import FilterBar from "./LogsFilterBar";
 
 export interface MessagePreviewProps {
     className: string;
@@ -37,8 +38,66 @@ export interface MessagePreviewProps {
     hideSimpleEmbedContent: boolean;
 }
 
-const PrivateChannelRecord = findByCodeLazy(".is_message_request_timestamp,");
-const MessagePreview = LazyComponent<MessagePreviewProps>(() => find(m => m?.type?.toString().includes("previewLinkTarget:") && !m?.type?.toString().includes("HAS_THREAD")));
+const ModalUtils = findByPropsLazy("closeAllModals", "openModal");
+
+function closeAllModals() {
+    ModalUtils.closeAllModals();
+}
+
+const MESSAGE_PREVIEW_FILTER = (m: any) =>
+    m?.type?.toString().includes("previewLinkTarget:") && !m?.type?.toString().includes("HAS_THREAD");
+
+let privateChannelFilter: ((m: any) => boolean) | null = null;
+
+function getPrivateChannelFilter() {
+    privateChannelFilter ??= filters.byCode(".is_message_request_timestamp,");
+    return privateChannelFilter;
+}
+
+let messagePreviewComponent: React.ComponentType<MessagePreviewProps> | null = null;
+let privateChannelRecord: any = null;
+let lazyModulesSubscribed = false;
+const lazyModuleListeners = new Set<() => void>();
+
+function resolveLazyModules() {
+    if (messagePreviewComponent == null) {
+        const found = find(MESSAGE_PREVIEW_FILTER, { isIndirect: true });
+        if (found) messagePreviewComponent = found as React.ComponentType<MessagePreviewProps>;
+    }
+
+    if (privateChannelRecord == null) {
+        const found = find(getPrivateChannelFilter(), { isIndirect: true });
+        if (found) privateChannelRecord = found;
+    }
+}
+
+function subscribeLazyModules() {
+    if (lazyModulesSubscribed) return;
+    lazyModulesSubscribed = true;
+
+    const notify = () => {
+        resolveLazyModules();
+        lazyModuleListeners.forEach(listener => listener());
+    };
+
+    resolveLazyModules();
+    waitFor(MESSAGE_PREVIEW_FILTER, notify);
+    waitFor(getPrivateChannelFilter(), notify);
+}
+
+function useLazyModules() {
+    const [, setVersion] = useState(0);
+
+    useEffect(() => {
+        subscribeLazyModules();
+
+        const listener = () => setVersion(v => v + 1);
+        lazyModuleListeners.add(listener);
+        return () => void lazyModuleListeners.delete(listener);
+    }, []);
+
+    return { messagePreview: messagePreviewComponent, privateChannelRecord };
+}
 
 const cl = classNameFactory("aegis-modal-");
 
@@ -49,18 +108,28 @@ export enum LogTabs {
 }
 
 interface Props {
-    modalProps: ModalProps;
+    modalProps: RenderModalProps;
     initalQuery?: string;
 }
 
-export function LogsModal({ modalProps, initalQuery }: Props) {
+function LogsModal({ modalProps, initalQuery }: Props) {
     const [currentTab, setCurrentTab] = useState(LogTabs.DELETED);
     const [queryEh, setQuery] = useState(initalQuery ?? "");
     const [sortNewest, setSortNewest] = useState(settings.store.sortNewest);
     const [numDisplayedMessages, setNumDisplayedMessages] = useState(settings.store.messagesToDisplayAtOnceInLogs);
     const contentRef = useRef<HTMLDivElement | null>(null);
 
-    const { messages, total, statusTotal, pending, reset } = useMessages(queryEh, currentTab, sortNewest, numDisplayedMessages);
+    const { messages, total, statusTotal, pending, reset } = hooks.useMessages(queryEh, currentTab, sortNewest, numDisplayedMessages);
+    const active = modalProps.transitionState === 1;
+    const addQueryToken = React.useCallback((token: string) => setQuery(q => (q + " " + token).trim()), []);
+    const handleLoadMore = React.useCallback(
+        () => setNumDisplayedMessages(e => e + settings.store.messagesToDisplayAtOnceInLogs),
+        []
+    );
+
+    useEffect(() => {
+        searchIndex.build(() => idb.iterateRawMessagesIDB(2000)).catch(error => console.error("[AegisLogger] search index build failed", error));
+    }, []);
 
     return (
         <ModalRoot className={cl("root")} {...modalProps} size={ModalSize.LARGE}>
@@ -69,6 +138,7 @@ export function LogsModal({ modalProps, initalQuery }: Props) {
                     query={queryEh}
                     onChange={setQuery}
                     placeholder={t("modal.placeholder")}
+                    active={active}
                 />
                 <TabBar
                     type="top"
@@ -118,12 +188,11 @@ export function LogsModal({ modalProps, initalQuery }: Props) {
                             <LogsContentMemo
                                 visibleMessages={messages}
                                 canLoadMore={messages.length < statusTotal && messages.length >= settings.store.messagesToDisplayAtOnceInLogs}
-                                pending={pending}
                                 tab={currentTab}
                                 sortNewest={sortNewest}
                                 reset={reset}
-                                addQueryToken={token => setQuery(q => (q + " " + token).trim())}
-                                handleLoadMore={() => setNumDisplayedMessages(e => e + settings.store.messagesToDisplayAtOnceInLogs)}
+                                addQueryToken={addQueryToken}
+                                handleLoadMore={handleLoadMore}
                             />
                         )}
                     </ModalContent>
@@ -143,7 +212,7 @@ export function LogsModal({ modalProps, initalQuery }: Props) {
                         confirmVariant: "critical-primary",
                         cancelText: t("common.cancel"),
                         onConfirm: async () => {
-                            await deleteMessagesBulkIDB(messages.map(e => e.message_id));
+                            await idb.deleteMessagesBulkIDB(messages.map(e => e.message_id));
                             reset();
                         }
                     })}
@@ -173,19 +242,18 @@ interface LogContentProps {
     tab: LogTabs;
     visibleMessages: DBMessageRecord[];
     canLoadMore: boolean;
-    pending: boolean;
     reset: () => void;
     addQueryToken: (token: string) => void;
     handleLoadMore: () => void;
 }
 
-function LogsContent({ visibleMessages, canLoadMore, pending, sortNewest, tab, reset, addQueryToken, handleLoadMore }: LogContentProps) {
+function LogsContent({ visibleMessages, canLoadMore, sortNewest, tab, reset, addQueryToken, handleLoadMore }: LogContentProps) {
     const sentinelRef = useRef<HTMLDivElement | null>(null);
     const fetchingRef = useRef(false);
 
     useEffect(() => {
-        if (!pending) fetchingRef.current = false;
-    }, [pending]);
+        fetchingRef.current = false;
+    }, [visibleMessages.length]);
 
     useEffect(() => {
         const el = sentinelRef.current;
@@ -209,9 +277,9 @@ function LogsContent({ visibleMessages, canLoadMore, pending, sortNewest, tab, r
         <div className={cl("content-inner")}>
             {visibleMessages
                 .map(({ message }, i) => (
-                    <LMessage
+                    <LMessageMemo
                         key={message.id}
-                        log={{ message }}
+                        message={message}
                         reset={reset}
                         isGroupStart={isGroupStart(message, visibleMessages[i - 1]?.message, sortNewest)}
                         addQueryToken={addQueryToken}
@@ -231,6 +299,7 @@ function LogsContent({ visibleMessages, canLoadMore, pending, sortNewest, tab, r
 }
 
 const LogsContentMemo = LazyComponent(() => React.memo(LogsContent));
+const LMessageMemo = LazyComponent<LMessageProps>(() => React.memo(LMessage));
 
 
 function NoResults({ tab }: { tab: LogTabs; }) {
@@ -296,7 +365,7 @@ function EmptyLogs({ hasQuery, reset: forceUpdate }: { hasQuery: boolean; reset:
 }
 
 interface LMessageProps {
-    log: { message: LoggedMessageJSON; };
+    message: LoggedMessageJSON;
     isGroupStart: boolean,
     reset: () => void;
     addQueryToken: (token: string) => void;
@@ -309,12 +378,13 @@ function formatLogDate(value: string | Date | undefined | null) {
     return date.toLocaleString(undefined, { year: "numeric", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
 }
 
-function LMessage({ log, isGroupStart, reset, addQueryToken }: LMessageProps) {
-    const message = useMemo(() => messageJsonToMessageClass(log), [log]);
+function LMessage({ message: record, isGroupStart, reset, addQueryToken }: LMessageProps) {
+    const { messagePreview: MessagePreview, privateChannelRecord: PrivateChannelRecord } = useLazyModules();
+    const message = useMemo(() => messageJsonToMessageClass({ message: record }), [record]);
 
     if (!message) return null;
 
-    const guildId = log.message.guildId ?? getGuildIdByChannel(message.channel_id);
+    const guildId = record.guildId ?? getGuildIdByChannel(message.channel_id);
     const guild = guildId != null ? GuildStore.getGuild(guildId) : null;
     const channel = ChannelStore.getChannel(message.channel_id);
     const isDM = channel?.isDM?.() ?? guildId == null;
@@ -336,8 +406,8 @@ function LMessage({ log, isGroupStart, reset, addQueryToken }: LMessageProps) {
     };
 
     const sentAt = formatLogDate(message.timestamp);
-    const deletedAt = formatLogDate(log.message.deletedTimestamp);
-    const editedAt = formatLogDate(log.message.editHistory?.[log.message.editHistory.length - 1]?.timestamp);
+    const deletedAt = formatLogDate(record.deletedTimestamp);
+    const editedAt = formatLogDate(record.editHistory?.[record.editHistory.length - 1]?.timestamp);
 
     return (
         <div
@@ -418,13 +488,13 @@ function LMessage({ log, isGroupStart, reset, addQueryToken }: LMessageProps) {
                         />
 
                         {
-                            log.message.guildId != null
+                            record.guildId != null
                             && (
                                 <Menu.MenuItem
                                     key="copy-server-id"
                                     id="copy-server-id"
                                     label={t("modal.menu.copyServerId")}
-                                    action={() => copyWithToast(log.message.guildId!, t("copy.copied"))}
+                                    action={() => copyWithToast(record.guildId!, t("copy.copied"))}
                                 />
                             )
                         }
@@ -435,7 +505,7 @@ function LMessage({ log, isGroupStart, reset, addQueryToken }: LMessageProps) {
                             label={t("modal.menu.deleteLog")}
                             color="danger"
                             action={() =>
-                                deleteMessageIDB(log.message.id).then(() => reset())
+                                idb.deleteMessageIDB(record.id).then(() => reset())
                             }
                         />
 
@@ -485,21 +555,30 @@ function LMessage({ log, isGroupStart, reset, addQueryToken }: LMessageProps) {
                 {deletedAt && <span> · {t("modal.context.deleted", { time: deletedAt })}</span>}
                 {editedAt && <span> · {t("modal.context.edited", { time: editedAt })}</span>}
             </div>
-            <MessagePreview
-                className={`${cl("msg-preview")} ${message.deleted ? "messagelogger-deleted" : ""}`}
-                author={message.author}
-                message={message}
-                channel={ChannelStore.getChannel(message.channel_id) || new PrivateChannelRecord({ id: "" })}
-                compact={false}
-                isGroupStart={isGroupStart}
-                hideSimpleEmbedContent={false}
-            />
+            {MessagePreview != null && (
+                <MessagePreview
+                    className={`${cl("msg-preview")} ${message.deleted ? "messagelogger-deleted" : ""}`}
+                    author={message.author}
+                    message={message}
+                    channel={ChannelStore.getChannel(message.channel_id) || (PrivateChannelRecord ? new PrivateChannelRecord({ id: "" }) : { id: "" } as any)}
+                    compact={false}
+                    isGroupStart={isGroupStart}
+                    hideSimpleEmbedContent={false}
+                />
+            )}
         </div>
         </div>
     );
 }
 
-export const openLogModal = (initalQuery?: string) => openModal(modalProps => <LogsModal modalProps={modalProps} initalQuery={initalQuery} />);
+const openLogModal = (initalQuery?: string) => openModal(modalProps => <LogsModal modalProps={modalProps} initalQuery={initalQuery} />);
+
+const logsModal = {
+    LogsModal,
+    openLogModal,
+};
+
+export default logsModal;
 
 function isGroupStart(
     currentMessage: LoggedMessageJSON | undefined,

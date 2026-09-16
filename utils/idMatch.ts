@@ -7,6 +7,7 @@
 export interface MatchCandidate {
     id: string;
     name: string;
+    username?: string;
     typeLabel: string;
 }
 

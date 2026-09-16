@@ -1,4 +1,11 @@
+/*
+ * Vencord, a Discord client mod
+ * Copyright (c) 2026 JST
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
+
 import { beforeEach, describe, expect, it, vi } from "vitest";
+
 import * as webpackCommon from "./mocks/webpackCommon";
 
 vi.mock("../utils/index", () => ({

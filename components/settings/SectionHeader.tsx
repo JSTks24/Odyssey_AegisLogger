@@ -4,9 +4,9 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
-import { classNameFactory } from "@utils/css";
 import { Divider } from "@components/Divider";
 import { Heading } from "@components/Heading";
+import { classNameFactory } from "@utils/css";
 
 import { t } from "../../utils/i18n";
 

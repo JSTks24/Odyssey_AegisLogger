@@ -3,6 +3,14 @@
     "version": "1.0.0",
     "private": true,
     "license": "GPL-3.0-or-later",
+    "homepage": "https://github.com/JSTks24/Odyssey_AegisLogger#readme",
+    "repository": {
+        "type": "git",
+        "url": "git+https://github.com/JSTks24/Odyssey_AegisLogger.git"
+    },
+    "bugs": {
+        "url": "https://github.com/JSTks24/Odyssey_AegisLogger/issues"
+    },
     "type": "module",
     "scripts": {
         "test": "vitest run",
