@@ -61,6 +61,62 @@ describe("matchCandidates", () => {
 
         expect(matchCandidates("alpha", dupPool).map(entry => entry.id)).toEqual(["a", "b"]);
     });
+
+    it("matches the username field by prefix and substring", () => {
+        const userPool = [
+            { id: "200", name: "Display A", username: "al_gamer", typeLabel: "user" },
+            { id: "201", name: "Display B", username: "xal_y", typeLabel: "user" }
+        ];
+
+        expect(matchCandidates("al_g", userPool).map(entry => entry.id)).toEqual(["200"]);
+        expect(matchCandidates("AL_", userPool).map(entry => entry.id)).toEqual(["200", "201"]);
+    });
+
+    it("matches username case-insensitively", () => {
+        const userPool = [
+            { id: "202", name: "展示名", username: "Tsukasa", typeLabel: "user" }
+        ];
+
+        expect(matchCandidates("TSUK", userPool).map(entry => entry.id)).toEqual(["202"]);
+        expect(matchCandidates("kas", userPool).map(entry => entry.id)).toEqual(["202"]);
+    });
+
+    it("matches id prefixes for numeric input of three or more digits", () => {
+        const snowflakePool = [
+            { id: "1380075940285124724", name: "Alice", typeLabel: "user" },
+            { id: "1380075940285124799", name: "Bob", typeLabel: "user" },
+            { id: "1371111111111111111", name: "Carol", typeLabel: "user" }
+        ];
+
+        expect(matchCandidates("138007", snowflakePool).map(entry => entry.id)).toEqual(["1380075940285124724", "1380075940285124799"]);
+        expect(matchCandidates("100", pool).map(entry => entry.id)).toEqual(["100"]);
+    });
+
+    it("does not match id prefixes for short numeric input", () => {
+        expect(matchCandidates("10", pool)).toEqual([]);
+        expect(matchCandidates("1", pool)).toEqual([]);
+    });
+
+    it("orders name tiers above username tiers", () => {
+        const tierPool = [
+            { id: "300", name: "abby", typeLabel: "user" },
+            { id: "301", name: "zzz", username: "ab1", typeLabel: "user" },
+            { id: "302", name: "xabby", typeLabel: "user" },
+            { id: "303", name: "yyy", username: "xab", typeLabel: "user" }
+        ];
+
+        expect(matchCandidates("ab", tierPool).map(entry => entry.id)).toEqual(["300", "301", "302", "303"]);
+    });
+
+    it("ranks exact id above id prefix matches", () => {
+        const idPool = [
+            { id: "123", name: "name-a", typeLabel: "user" },
+            { id: "1234", name: "name-b", typeLabel: "user" },
+            { id: "12399", name: "name-c", typeLabel: "user" }
+        ];
+
+        expect(matchCandidates("123", idPool).map(entry => entry.id)).toEqual(["123", "1234", "12399"]);
+    });
 });
 
 describe("resolveInput", () => {

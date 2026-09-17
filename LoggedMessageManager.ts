@@ -27,8 +27,13 @@ export const addMessage = async (message: LoggedMessage | LoggedMessageJSON, sta
 
     if (contentExcluded(finalMessage.content, finalMessage.guildId, finalMessage.channel_id, finalMessage.author?.id)) return;
 
-    if (settings.store.saveImages && status === DBMessageStatus.DELETED)
-        await cacheMessageImages(message);
+    if (settings.store.saveImages) {
+        if (status === DBMessageStatus.DELETED) {
+            await cacheMessageImages(message);
+        } else if (status === DBMessageStatus.EDITED && message.attachments?.some(attachment => attachment.deleted)) {
+            await cacheMessageImages(message, attachment => attachment.deleted === true);
+        }
+    }
 
     await idb.addMessageIDB(finalMessage, status);
 

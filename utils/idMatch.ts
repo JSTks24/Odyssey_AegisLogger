@@ -8,6 +8,7 @@ export interface MatchCandidate {
     id: string;
     name: string;
     username?: string;
+    sub?: string;
     typeLabel: string;
 }
 
@@ -16,6 +17,7 @@ export function matchCandidates(input: string, pool: MatchCandidate[], limit = 8
     if (!q) return [];
 
     const scored: { candidate: MatchCandidate; score: number; index: number; }[] = [];
+    const idPrefix = /^\d{3,}$/.test(q);
     pool.forEach((candidate, index) => {
         if (candidate.id === q) {
             scored.push({ candidate, score: 0, index });
@@ -23,9 +25,15 @@ export function matchCandidates(input: string, pool: MatchCandidate[], limit = 8
         }
 
         const name = candidate.name.toLowerCase();
-        if (!name.includes(q)) return;
+        const username = candidate.username?.toLowerCase();
+        let score: number | null = null;
+        if (name.startsWith(q)) score = 1;
+        else if (username?.startsWith(q)) score = 2;
+        else if (name.includes(q)) score = 3;
+        else if (username?.includes(q)) score = 4;
+        else if (idPrefix && candidate.id.startsWith(q)) score = 5;
 
-        scored.push({ candidate, score: name.startsWith(q) ? 1 : 2, index });
+        if (score != null) scored.push({ candidate, score, index });
     });
 
     return scored

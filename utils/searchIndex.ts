@@ -156,7 +156,7 @@ function matchesQuery(entry: indexedMessage, query: QueryResult) {
         case "channel": {
             const channel = ChannelStore.getChannel(entry.channelId);
             if (!channel) return entry.channelId === query.value;
-            return channel.id === query.value || channel.name.toLowerCase().includes(query.value.toLowerCase());
+            return channel.id === query.value || (channel.name ?? "").toLowerCase().includes(query.value.toLowerCase());
         }
         case "message":
             return entry.id === query.value;

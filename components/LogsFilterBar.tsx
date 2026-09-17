@@ -7,13 +7,14 @@
 import { classNameFactory } from "@api/Styles";
 import { Button } from "@components/Button";
 import { ClockIcon, ImageIcon, LinkIcon, PlusIcon } from "@components/Icons";
-import { ChannelStore, GuildStore, React, ReactDOM, RelationshipStore, useEffect, useMemo, useRef, UserStore, useState } from "@webpack/common";
+import { ChannelStore, GuildStore, React, ReactDOM, useEffect, useMemo, useRef, UserStore, useState } from "@webpack/common";
 
 import idb, { LogEntities } from "../db";
 import calendar from "../utils/calendar";
+import entityPool from "../utils/entityPool";
 import { getLocale, t } from "../utils/i18n";
-import { MatchCandidate, matchCandidates } from "../utils/idMatch";
-import { parseQuery, QueryResult, removeQueryToken, tokenizeQuery, upsertQueryToken } from "../utils/parseQuery";
+import { matchCandidates } from "../utils/idMatch";
+import { HAS_VALUES, parseQuery, QueryResult, removeQueryToken, tokenizeQuery, upsertQueryToken } from "../utils/parseQuery";
 import searchBox from "../utils/searchBox";
 import DateCalendar from "./DateCalendar";
 import { resolveId } from "./settings/resolveId";
@@ -22,8 +23,6 @@ const cl = classNameFactory("aegis-modal-");
 
 export type FilterKind = "user" | "server" | "channel" | "has" | "before" | "after" | "date";
 type PickKind = FilterKind;
-
-const HAS_VALUES = ["attachment", "image", "video", "file", "sound", "embed", "link"];
 
 const LABEL_KEY: Record<string, string> = {
     user: "user",
@@ -164,8 +163,10 @@ function chipValue(q: QueryResult) {
         case "guild":
             return GuildStore.getGuild?.(q.value)?.name ?? q.value;
         case "channel":
-        case "in":
-            return ChannelStore.getChannel?.(q.value)?.name ?? q.value;
+        case "in": {
+            const channel: any = ChannelStore.getChannel?.(q.value);
+            return channel?.name ?? entityPool.dmChannelLabel(channel) ?? q.value;
+        }
         case "has":
             return t(`has.${q.value}`);
         case "before":
@@ -174,49 +175,6 @@ function chipValue(q: QueryResult) {
         default:
             return q.value;
     }
-}
-
-function buildEntityPool(kind: "user" | "server" | "channel", logged: LogEntities | null): MatchCandidate[] {
-    const entries = new Map<string, MatchCandidate>();
-    const push = (id: string, name: string | undefined, type: string, username?: string) => {
-        if (!id || entries.has(id)) return;
-        entries.set(id, { id, name: name ?? id, username, typeLabel: t(`settings.type${type === "server" ? "Server" : type === "channel" ? "Channel" : "User"}`) });
-    };
-
-    if (kind === "user") {
-        for (const author of logged?.authors ?? [])
-            push(author.id, author.globalName ?? author.username, "user", author.username);
-
-        for (const friendId of (RelationshipStore.getFriendIDs?.() ?? [])) {
-            const user = UserStore.getUsers()[friendId];
-            if (user) push(friendId, user.globalName ?? user.username, "user", user.username);
-        }
-
-        for (const dmUserId of (ChannelStore.getDMUserIds?.() ?? [])) {
-            const user = UserStore.getUsers()[dmUserId];
-            if (user) push(dmUserId, user.globalName ?? user.username, "user", user.username);
-        }
-    }
-
-    if (kind === "server") {
-        for (const guildId of logged?.guildIds ?? [])
-            push(guildId, GuildStore.getGuild?.(guildId)?.name ?? guildId, "server");
-
-        for (const guild of Object.values(GuildStore.getGuilds?.() ?? {}))
-            push(guild.id, guild.name, "server");
-    }
-
-    if (kind === "channel") {
-        for (const channelId of logged?.channelIds ?? [])
-            push(channelId, ChannelStore.getChannel?.(channelId)?.name ?? channelId, "channel");
-
-        for (const channelId of (ChannelStore.getChannelIds?.() ?? [])) {
-            const channel = ChannelStore.getBasicChannel(channelId);
-            if (channel?.name) push(channelId, channel.name, "channel");
-        }
-    }
-
-    return [...entries.values()];
 }
 
 interface PanelItem {
@@ -233,7 +191,6 @@ interface FilterBarProps {
 }
 
 export default function FilterBar({ query, onChange, placeholder, active }: FilterBarProps) {
-    const { queries } = useMemo(() => tokenizeQuery(query), [query]);
     const [panelOpen, setPanelOpen] = useState(false);
     const [activeKind, setActiveKind] = useState<PickKind | null>(null);
     const [dateKind, setDateKind] = useState<"before" | "after">("before");
@@ -244,6 +201,8 @@ export default function FilterBar({ query, onChange, placeholder, active }: Filt
     const dateTypeRef = useRef(false);
     dateTypeRef.current = dateTypeOpen;
     const [logged, setLogged] = useState<LogEntities | null>(null);
+    const [activeNegate, setActiveNegate] = useState(false);
+    const [dateScope, setDateScope] = useState<"before" | "after" | null>(null);
     const [highlightIndex, setHighlightIndex] = useState(-1);
     const areaRef = useRef<HTMLDivElement | null>(null);
     const panelRef = useRef<HTMLDivElement | null>(null);
@@ -253,6 +212,8 @@ export default function FilterBar({ query, onChange, placeholder, active }: Filt
     queryRef.current = query;
     const onChangeRef = useRef(onChange);
     onChangeRef.current = onChange;
+    const editRawRef = useRef<string | null>(null);
+    const activeNegateRef = useRef(false);
     const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
     const highlightRef = useRef(-1);
     const itemsRef = useRef<PanelItem[]>([]);
@@ -288,14 +249,11 @@ export default function FilterBar({ query, onChange, placeholder, active }: Filt
         const handleBlur = () => {
             if (closeTimer.current != null) clearTimeout(closeTimer.current);
             closeTimer.current = setTimeout(() => {
-                const kind = activeKindRef.current;
-                if (kind === "user" || kind === "server" || kind === "channel") {
-                    const split = searchBox.splitActiveToken(queryRef.current, kind);
-                    if (split != null && split.rest === "") onChangeRef.current(split.head.trimEnd());
-                }
+                cancelActivePick();
                 setCalendarOpen(false);
                 setPanelOpen(false);
                 setActiveKind(null);
+                activeKindRef.current = null;
             }, 150);
         };
         const handleKeyDown = (e: KeyboardEvent) => {
@@ -312,9 +270,8 @@ export default function FilterBar({ query, onChange, placeholder, active }: Filt
                     highlightRef.current = -1;
                 } else if (activeKind != null) {
                     e.preventDefault();
-                    setActiveKind(null);
-                    setHighlightIndex(-1);
-                    highlightRef.current = -1;
+                    cancelActivePick();
+                    changeKind(null);
                 } else {
                     setPanelOpen(false);
                 }
@@ -347,19 +304,10 @@ export default function FilterBar({ query, onChange, placeholder, active }: Filt
         area.addEventListener("focusout", handleBlur);
         document.addEventListener("keydown", handleKeyDown);
 
-        const handleChipRemove = (e: MouseEvent) => {
-            const target = e.target as HTMLElement;
-            const btn = target.closest?.(".aegis-modal-query-chip-remove");
-            if (!btn) return;
-            const raw = btn.getAttribute("data-raw") ?? "";
-            onChangeRef.current(removeQueryToken(queryRef.current, raw));
-        };
-        area.addEventListener("click", handleChipRemove);
         return () => {
             area.removeEventListener("focusin", handleFocus);
             area.removeEventListener("focusout", handleBlur);
             document.removeEventListener("keydown", handleKeyDown);
-            area.removeEventListener("click", handleChipRemove);
         };
     }, [activeKind]);
 
@@ -392,8 +340,18 @@ export default function FilterBar({ query, onChange, placeholder, active }: Filt
     const applyToken = (kind: FilterKind, value: string, negate = false) =>
         onChange(upsertQueryToken(query, kind, `${negate ? "!" : ""}${kind}:${value}`, negate, kind === "has"));
 
+    const cancelActivePick = () => {
+        const kind = activeKindRef.current;
+        let base = queryRef.current;
+        if (kind === "user" || kind === "server" || kind === "channel") {
+            base = searchBox.cancelPick(queryRef.current, kind, editRawRef.current);
+            if (base !== queryRef.current) onChangeRef.current(base);
+        }
+        editRawRef.current = null;
+        return base;
+    };
     const applyPick = (kind: PickKind, value: string) => {
-        const negate = queries.find(q => (CANONICAL_KIND[q.key] ?? q.key) === kind)?.negate ?? false;
+        const negate = activeNegateRef.current;
         const split = searchBox.splitActiveToken(query, kind);
         const cleaned = split != null ? split.head.trimEnd() : query;
         onChange(upsertQueryToken(cleaned, kind, `${negate ? "!" : ""}${kind}:${value}`, negate, kind === "has"));
@@ -408,22 +366,26 @@ export default function FilterBar({ query, onChange, placeholder, active }: Filt
         highlightRef.current = -1;
     };
     const startPick = (kind: "user" | "server" | "channel") => {
+        const current = tokenizeQuery(queryRef.current).queries.find(q => (CANONICAL_KIND[q.key] ?? q.key) === kind && !q.negate);
+        editRawRef.current = current?.raw ?? null;
+        activeNegateRef.current = false;
+        setActiveNegate(false);
         onChangeRef.current(upsertQueryToken(queryRef.current, kind, `${kind}:`));
         changeKind(kind);
     };
-    const dateToken = () => queries.find(q => q.key === "before" || q.key === "after");
 
     const openDateEditor = (current?: QueryResult) => {
-        const existing = current ?? dateToken();
-        setDateKind(existing?.key === "after" ? "after" : "before");
-        setDateValue(existing?.value ?? "");
+        setDateScope(current?.key === "before" || current?.key === "after" ? current.key : null);
+        setDateKind(current?.key === "after" ? "after" : "before");
+        setDateValue(current?.value ?? "");
         changeKind("date");
     };
 
     const commitDate = (kind: "before" | "after", value: string) => {
         setDateKind(kind);
         setDateValue(value);
-        onChange(upsertQueryToken(searchBox.removeTokens(query, ["before", "after"]), kind, `${kind}:${value}`));
+        const base = dateScope != null ? searchBox.removeTokens(query, [dateScope]) : query;
+        onChange(upsertQueryToken(base, kind, `${kind}:${value}`));
     };
 
     const addDate = () => commitDate(dateKind, calendar.todayISO());
@@ -431,7 +393,7 @@ export default function FilterBar({ query, onChange, placeholder, active }: Filt
     const removeDate = () => {
         setDateValue("");
         setCalendarOpen(false);
-        onChange(searchBox.removeTokens(query, ["before", "after"]));
+        onChange(searchBox.removeTokens(query, [dateScope ?? dateKind]));
     };
 
     const toggleCalendar = () => {
@@ -468,13 +430,24 @@ export default function FilterBar({ query, onChange, placeholder, active }: Filt
     ];
 
     const editToken = (kind: PickKind, current?: QueryResult) => {
-        if (kind === "before" || kind === "after") openDateEditor(current);
-        else changeKind(kind);
+        const base = cancelActivePick();
+        if (kind === "before" || kind === "after") {
+            openDateEditor(current);
+            return;
+        }
+        const value = current?.value ?? "";
+        const negate = current?.negate ?? false;
+        const stripped = current ? removeQueryToken(base, current.raw) : base;
+        onChange((stripped ? stripped + " " : "") + `${negate ? "!" : ""}${kind}:${value}`);
+        editRawRef.current = current?.raw ?? null;
+        activeNegateRef.current = negate;
+        setActiveNegate(negate);
+        changeKind(kind);
     };
 
     const pool = useMemo(
         () => (activeKind === "user" || activeKind === "server" || activeKind === "channel"
-            ? buildEntityPool(activeKind, logged)
+            ? entityPool.buildEntityPool(activeKind, logged)
             : []),
         [activeKind, logged]
     );
@@ -484,14 +457,14 @@ export default function FilterBar({ query, onChange, placeholder, active }: Filt
     const { tokens, rest } = searchBox.splitLeadingTokens(activeSplit != null ? activeSplit.head : query);
     const boxRest = activeSplit != null ? activeSplit.rest : rest;
     const setRest = (value: string) => onChange(activeSplit != null
-        ? activeSplit.head + `${activeKind!}:` + value
+        ? activeSplit.head + activeSplit.prefix + value
         : searchBox.composeSearchBox(tokens, value));
     const filterText = activeSplit != null ? activeSplit.rest : "";
     const candidates = useMemo(
         () => (filterText.trim() ? matchCandidates(filterText, pool, 8) : pool.slice(0, 8)),
         [filterText, pool]
     );
-    const rawId = /^\d+$/.test(filterText.trim()) ? filterText.trim() : null;
+    const rawId = /^\d{17,21}$/.test(filterText.trim()) ? filterText.trim() : null;
     const rawIdMissing = rawId != null && candidates.length === 0;
 
     const mainItems: PanelItem[] = [
@@ -583,7 +556,7 @@ export default function FilterBar({ query, onChange, placeholder, active }: Filt
                     active={active}
                     icon={entityIcon(candidate.id)}
                     main={candidate.name}
-                    sub={activeKind === "user" ? candidate.username ?? `${candidate.typeLabel} · ${candidate.id}` : undefined}
+                    sub={activeKind === "user" ? candidate.username ?? `${candidate.typeLabel} · ${candidate.id}` : candidate.sub}
                     plainSub
                 />
             )
@@ -598,6 +571,7 @@ export default function FilterBar({ query, onChange, placeholder, active }: Filt
         {
             key: "back",
             action: () => {
+                cancelActivePick();
                 changeKind(null);
             },
             render: (active: boolean) => (
@@ -628,16 +602,33 @@ export default function FilterBar({ query, onChange, placeholder, active }: Filt
                     const parsed = parseQuery(seg);
                     if (typeof parsed === "string")
                         return null;
+                    const kind = CANONICAL_KIND[parsed.key];
+                    const editable = kind != null && EDITABLE_KEYS.has(parsed.key);
                     return (
-                        <span key={`${i}-${seg}`} className={cl("search-token")}>
-                            <b>{chipLabel(parsed.key, parsed.negate)}:</b>
-                            <span>{chipValue(parsed)}</span>
+                        <span
+                            key={`${i}-${seg}`}
+                            className={cl("search-token") + (editable ? " " + cl("search-token-editable") : "")}
+                        >
+                            <span
+                                className={cl("search-token-body")}
+                                onClick={() => editable && kind && editToken(kind, parsed)}
+                            >
+                                <b>{chipLabel(parsed.key, parsed.negate)}:</b>
+                                <span>{chipValue(parsed)}</span>
+                            </span>
+                            <button
+                                type="button"
+                                className={cl("search-token-remove")}
+                                onClick={() => onChange(removeQueryToken(query, parsed.raw))}
+                            >
+                                ×
+                            </button>
                         </span>
                     );
                 })}
                 {activeSplit != null && (
                     <span className={cl("search-token", "search-token-active")}>
-                        <b>{chipLabel(activeKind!, false)}:</b>
+                        <b>{chipLabel(activeKind!, activeNegate)}:</b>
                     </span>
                 )}
                 <input
@@ -757,32 +748,6 @@ export default function FilterBar({ query, onChange, placeholder, active }: Filt
                     }}
                     onClose={() => setCalendarOpen(false)}
                 />
-            )}
-            {queries.length > 0 && (
-                <div className={cl("query-chips")}>
-                    {queries.map((q, i) => {
-                        const kind = CANONICAL_KIND[q.key];
-                        const editable = kind != null && EDITABLE_KEYS.has(q.key);
-
-                        return (
-                            <span key={`${q.key}:${q.value}:${i}`} className={cl("query-chip")}>
-                                <span className={cl("filter-chip-key")}>{chipLabel(q.key, q.negate)}:</span>
-                                <span
-                                    className={editable ? cl("filter-chip-value", "filter-chip-editable") : cl("filter-chip-value")}
-                                    onClick={() => editable && kind && editToken(kind, q)}
-                                >
-                                    {chipValue(q)}
-                                </span>
-                                <button
-                                    className={cl("query-chip-remove")}
-                                    data-raw={q.raw}
-                                >
-                                    ×
-                                </button>
-                            </span>
-                        );
-                    })}
-                </div>
             )}
         </div>
     );

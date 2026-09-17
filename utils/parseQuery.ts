@@ -26,11 +26,26 @@ import { memoize } from "./memoize";
 const validIdSearchTypes = ["server", "guild", "channel", "in", "user", "from", "message", "has", "before", "after", "around", "near", "during"] as const;
 type ValidIdSearchTypesUnion = typeof validIdSearchTypes[number];
 
+export const HAS_VALUES = ["attachment", "image", "video", "file", "sound", "embed", "link"];
+
 export interface QueryResult {
     key: ValidIdSearchTypesUnion;
     value: string;
     negate: boolean;
     raw: string;
+}
+
+function isDateType(type: ValidIdSearchTypesUnion) {
+    return type === "before" || type === "after" || type === "around" || type === "near" || type === "during";
+}
+
+function isValidDateValue(value: string) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+    const date = new Date(value);
+    return !Number.isNaN(date.getTime())
+        && date.getUTCFullYear() === Number(value.slice(0, 4))
+        && date.getUTCMonth() === Number(value.slice(5, 7)) - 1
+        && date.getUTCDate() === Number(value.slice(8, 10));
 }
 
 export const parseQuery = memoize((query: string = ""): QueryResult | string => {
@@ -42,7 +57,7 @@ export const parseQuery = memoize((query: string = ""): QueryResult | string => 
     let negate = false;
     if (trimmedQuery.startsWith("!")) {
         negate = true;
-        trimmedQuery = trimmedQuery.substring(trimmedQuery.length, 1);
+        trimmedQuery = trimmedQuery.substring(1);
     }
 
     const [filter, rest] = trimmedQuery.split(" ", 2);
@@ -54,6 +69,9 @@ export const parseQuery = memoize((query: string = ""): QueryResult | string => 
     if (!type || !id || !validIdSearchTypes.includes(type)) {
         return query;
     }
+    if (type === "has" && !HAS_VALUES.includes(id)) return query;
+    if (isDateType(type) && !isValidDateValue(id)) return query;
+    if (type === "message" && !/^\d+$/.test(id)) return query;
 
     return {
         key: type,
@@ -103,7 +121,7 @@ export const doesMatch = (type: typeof validIdSearchTypes[number], value: string
                 return message.channel_id === value;
             const { name, id } = channel;
             return id === value
-                || name.toLowerCase().includes(value.toLowerCase());
+                || (name ?? "").toLowerCase().includes(value.toLowerCase());
         case "message":
             return message.id === value;
         case "from":

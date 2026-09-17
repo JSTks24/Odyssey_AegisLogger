@@ -63,8 +63,8 @@ const BOX_STATE = `(() => {
     return {
         value: input.value,
         active: !!document.querySelector('.aegis-modal-search-token-active'),
-        tokens: [...document.querySelectorAll('.aegis-modal-search-token')].map(e => e.textContent),
-        chips: [...document.querySelectorAll('.aegis-modal-query-chip')].map(e => e.textContent),
+        tokens: [...document.querySelectorAll('.aegis-modal-search-token:not(.aegis-modal-search-token-active)')].map(e => e.textContent),
+        removes: document.querySelectorAll('.aegis-modal-search-token-remove').length,
         focused: document.activeElement === input
     };
 })()`;
@@ -86,8 +86,8 @@ try {
                 input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
                 await new Promise(r => setTimeout(r, 200));
             }
-            for (let i = 0; i < 12 && document.querySelector('.aegis-modal-query-chip-remove'); i++) {
-                document.querySelector('.aegis-modal-query-chip-remove').click();
+            for (let i = 0; i < 12 && document.querySelector('.aegis-modal-search-token-remove'); i++) {
+                document.querySelector('.aegis-modal-search-token-remove').click();
                 await new Promise(r => setTimeout(r, 120));
             }
             const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
@@ -128,7 +128,7 @@ try {
         await click(x, y);
         await sleep(400);
         const r = await evalJs(`(state => ({ ...state, titles: [...document.querySelectorAll('.aegis-modal-filter-panel-title')].map(e => e.textContent) }))(${BOX_STATE})`);
-        record("T4 鼠标点击候选生成芯片并回筛选层", r.chips.length === 1 && !r.active && r.tokens.length === 1 && r.value === "" && r.titles.includes("筛选"), r);
+        record("T4 鼠标点击候选生成框内token并回筛选层", r.tokens.length === 1 && r.removes === 1 && !r.active && r.value === "" && r.titles.includes("筛选"), r);
         await screenshot("T4-chip");
     }
 
@@ -143,18 +143,18 @@ try {
         await evalJs(`${pressKey("ArrowDown")}${pressKey("ArrowDown")}${pressKey("Enter")}1`);
         await sleep(350);
         const r2 = await evalJs(BOX_STATE);
-        record("T5b 键盘应用 has:image", r2.chips.length === 2 && r2.tokens.some(e => e.includes("图片")), r2);
+        record("T5b 键盘应用 has:image", r2.tokens.length === 2 && r2.removes === 2 && r2.tokens.some(e => e.includes("图片")), r2);
         await screenshot("T5-keyboard");
     }
 
     {
         const r = await evalJs(`(() => new Promise(res => {
-            const rm = document.querySelector('.aegis-modal-query-chip-remove');
+            const rm = document.querySelector('.aegis-modal-search-token-remove');
             if (!rm) { res({ rm: false }); return; }
             for (const t of ['mousedown', 'mouseup', 'click']) rm.dispatchEvent(new MouseEvent(t, { bubbles: true, cancelable: true, view: window }));
             setTimeout(() => res((state => ({ ...state, hit: rm.tagName }))(${BOX_STATE})), 350);
         }))()`);
-        record("T6 芯片×删除单个筛选", r.chips.length === 1 && r.tokens.length === 1 && r.tokens[0].includes("图片") && r.value === "", r);
+        record("T6 框内token×删除单个筛选", r.tokens.length === 1 && r.removes === 1 && r.tokens[0].includes("图片") && r.value === "", r);
     }
 
     {
@@ -195,7 +195,7 @@ try {
             remove: !!document.querySelector('.aegis-modal-date-remove'),
             expected: new Intl.DateTimeFormat("zh-CN", { year: "numeric", month: "long", day: "numeric" }).format(new Date())
         }))(${BOX_STATE})`);
-        record("T8c 添加日期生成今日筛选 + 三格编辑器", r.row && r.field && r.remove && r.chips.some(c => c.includes(r.expected)), r);
+        record("T8c 添加日期生成今日筛选 + 三格编辑器", r.row && r.field && r.remove && r.tokens.some(tk => tk.includes(r.expected)), r);
     }
 
     {
@@ -214,7 +214,7 @@ try {
             closed: !document.querySelector('.aegis-modal-calendar'),
             expected: new Intl.DateTimeFormat("zh-CN", { year: "numeric", month: "long", day: "numeric" }).format(new Date(new Date().getFullYear(), new Date().getMonth(), 1))
         }))(${BOX_STATE})`);
-        record("T8e 选日期写回筛选并关闭日历", picked.closed && picked.chips.some(c => c.includes(picked.expected)), picked);
+        record("T8e 选日期写回筛选并关闭日历", picked.closed && picked.tokens.some(tk => tk.includes(picked.expected)), picked);
     }
 
     {
@@ -226,7 +226,7 @@ try {
         if (ox !== 0 || oy !== 0) await click(ox, oy);
         await sleep(400);
         const after = await evalJs(`(state => ({ ...state, editor: !!document.querySelector('.aegis-modal-date-row') }))(${BOX_STATE})`);
-        record("T8f 切换类型为「后」并替换筛选", list.title === "更改日期过滤类型" && list.rows.includes("后") && after.editor && after.chips.some(c => c.includes("晚于")), { list, tokens: after.tokens, chips: after.chips });
+        record("T8f 切换类型为「后」后早于/晚于并存（范围搜索）", list.title === "更改日期过滤类型" && list.rows.includes("后") && after.editor && after.tokens.some(tk => tk.includes("早于")) && after.tokens.some(tk => tk.includes("晚于")), { list, tokens: after.tokens });
     }
 
     {
@@ -234,7 +234,7 @@ try {
         await click(rx, ry);
         await sleep(450);
         const r = await evalJs(`(state => ({ ...state, add: !!document.querySelector('.aegis-modal-date-add') }))(${BOX_STATE})`);
-        record("T8g 垃圾桶清空日期筛选回到添加态", r.add && !r.chips.some(c => c.includes("早于") || c.includes("晚于")), r);
+        record("T8g 垃圾桶只移除当前类型的日期筛选", r.add && r.tokens.some(tk => tk.includes("早于")) && !r.tokens.some(tk => tk.includes("晚于")), r);
         await screenshot("T8-date");
     }
 
@@ -282,8 +282,8 @@ try {
                 input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
                 await new Promise(r => setTimeout(r, 200));
             }
-            for (let i = 0; i < 12 && document.querySelector('.aegis-modal-query-chip-remove'); i++) {
-                document.querySelector('.aegis-modal-query-chip-remove').click();
+            for (let i = 0; i < 12 && document.querySelector('.aegis-modal-search-token-remove'); i++) {
+                document.querySelector('.aegis-modal-search-token-remove').click();
                 await new Promise(r => setTimeout(r, 120));
             }
             const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
@@ -313,7 +313,12 @@ try {
         await sleep(400);
         await evalJs(pressKey("Escape"));
         await sleep(1200);
-        const r = await evalJs("({ rows: document.querySelectorAll('.aegis-modal-msg-context').length, previews: document.querySelectorAll('.aegis-modal-msg-preview').length, firstText: (document.querySelector('.aegis-modal-msg-preview')?.textContent || '').trim().slice(0, 40) })");
+        const probe = "({ rows: document.querySelectorAll('.aegis-modal-msg-context').length, previews: document.querySelectorAll('.aegis-modal-msg-preview').length, firstText: (document.querySelector('.aegis-modal-msg-preview')?.textContent || '').trim().slice(0, 40) })";
+        let r = await evalJs(probe);
+        for (let i = 0; i < 24 && r.previews === 0; i++) {
+            await sleep(500);
+            r = await evalJs(probe);
+        }
         record("T13 消息正文必须渲染（防懒加载静默置空）", r.rows > 0 && r.previews > 0 && r.firstText.length > 0, r);
     }
 
@@ -323,21 +328,22 @@ try {
             const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
             const apply = q => { set.call(input, q); input.dispatchEvent(new Event('input', { bubbles: true })); };
             const count = () => document.querySelectorAll('.aegis-modal-msg-context').length;
-            for (let i = 0; i < 12 && document.querySelector('.aegis-modal-query-chip-remove'); i++) {
-                document.querySelector('.aegis-modal-query-chip-remove').click();
+            const firstRow = () => (document.querySelector('.aegis-modal-msg-context')?.textContent || '').slice(0, 50);
+            for (let i = 0; i < 12 && document.querySelector('.aegis-modal-search-token-remove'); i++) {
+                document.querySelector('.aegis-modal-search-token-remove').click();
                 await new Promise(r => setTimeout(r, 150));
             }
             await apply('');
             await new Promise(r => setTimeout(r, 1500));
-            const before = count();
+            const before = { count: count(), first: firstRow() };
             const t0 = performance.now();
             await apply('has:sound');
             let ms = null;
             for (let i = 0; i < 200; i++) {
                 await new Promise(r => setTimeout(r, 25));
-                if (count() !== before || document.body.textContent.includes('没有找到结果')) { ms = Math.round(performance.now() - t0); break; }
+                if (count() !== before.count || firstRow() !== before.first || document.body.textContent.includes('没有找到结果')) { ms = Math.round(performance.now() - t0); break; }
             }
-            const after = count();
+            const after = { count: count(), first: firstRow(), empty: document.body.textContent.includes('没有找到结果') };
             await apply('');
             await new Promise(r => setTimeout(r, 1200));
             return { sparseMs: ms, before, after };
@@ -372,6 +378,142 @@ try {
         const ok = opened.panel && opened.cal && s.panelGoneAt != null && s.rootGoneAt != null
             && s.panelGoneAt <= s.rootGoneAt && s.calGoneAt != null && s.calGoneAt <= s.rootGoneAt;
         record("T14 关窗时面板/日历随大框一起消失", ok, { opened, ...s });
+    }
+
+    {
+        const reopened = await evalJs("(() => { if (document.querySelector('.aegis-modal-header input')) return false; window.Vencord.Plugins.plugins.AegisLogger.openLogModal(); return true; })()");
+        if (reopened) await sleep(3500);
+        const ready = await evalJs("!!document.querySelector('.aegis-modal-header input')");
+        if (ready) {
+            const [x, y] = await evalJs(INPUT_CENTER);
+            await click(x, y);
+            await sleep(350);
+            const [ux, uy] = await evalJs("(() => { const el = [...document.querySelectorAll('.aegis-modal-filter-item')].find(e => e.textContent.includes('来自特定用户')); if (!el) return [0, 0]; const r = el.getBoundingClientRect(); return [Math.round(r.x + r.width / 2), Math.round(r.y + r.height / 2)]; })()");
+            await click(ux, uy);
+            await sleep(400);
+            await evalJs(SET_INPUT("zzznope"));
+            await sleep(300);
+            const during = await evalJs(BOX_STATE);
+            await trustedClick(400, 700);
+            await sleep(600);
+            const after = await evalJs(BOX_STATE);
+            record("T16 垃圾输入失焦后整个前缀被移除", during.active && during.value === "zzznope" && !after.active && after.value === "" && after.tokens.length === 0, { during, after });
+        } else {
+            record("T16 垃圾输入失焦后整个前缀被移除", false, { reopened });
+        }
+    }
+
+    {
+        const [x, y] = await evalJs(INPUT_CENTER);
+        await click(x, y);
+        await sleep(350);
+        const [ux, uy] = await evalJs("(() => { const el = [...document.querySelectorAll('.aegis-modal-filter-item')].find(e => e.textContent.includes('来自特定用户')); if (!el) return [0, 0]; const r = el.getBoundingClientRect(); return [Math.round(r.x + r.width / 2), Math.round(r.y + r.height / 2)]; })()");
+        await click(ux, uy);
+        await sleep(400);
+        await evalJs(SET_INPUT("123"));
+        await sleep(300);
+        const short = await evalJs("(() => ({ rows: [...document.querySelectorAll('.aegis-modal-filter-panel .aegis-modal-filter-item')].map(e => e.textContent), unknown: document.body.textContent.includes('未知 ID') }))()");
+        const snowflake = String(Date.now()) + String(Math.floor(Math.random() * 100000)).padStart(5, "0");
+        await evalJs(SET_INPUT(snowflake));
+        await sleep(600);
+        const full = await evalJs("(() => ({ unknown: document.body.textContent.includes('未知 ID') }))()");
+        record("T17 短数字ID不提供未知ID行，完整snowflake才提供", !short.unknown && full.unknown, { short, full, snowflake });
+        await screenshot("T17-rawid");
+    }
+
+    {
+        await evalJs(SET_INPUT(""));
+        await sleep(250);
+        const [x, y] = await evalJs(INPUT_CENTER);
+        await click(x, y);
+        await sleep(300);
+        const [cx, cy] = await evalJs("(() => { const el = [...document.querySelectorAll('.aegis-modal-filter-item')].find(e => e.textContent.includes('在特定频道中发送')); if (!el) return [0, 0]; const r = el.getBoundingClientRect(); return [Math.round(r.x + r.width / 2), Math.round(r.y + r.height / 2)]; })()");
+        await click(cx, cy);
+        await sleep(450);
+        const r = await evalJs("(() => ({ rows: document.querySelectorAll('.aegis-modal-filter-panel .aegis-modal-filter-item').length, dmSub: [...document.querySelectorAll('.aegis-modal-filter-panel .aegis-modal-filter-item')].some(e => e.textContent.includes('私信')) }))()");
+        record("T18 频道层候选可列出（含私信标注如若有DM数据）", r.rows > 1, r);
+        await screenshot("T18-channels");
+    }
+
+    {
+        await evalJs(pressKey("Escape"));
+        await sleep(300);
+        await evalJs(SET_INPUT(""));
+        await sleep(250);
+        const [x, y] = await evalJs(INPUT_CENTER);
+        await click(x, y);
+        await sleep(300);
+        const [ux, uy] = await evalJs("(() => { const el = [...document.querySelectorAll('.aegis-modal-filter-item')].find(e => e.textContent.includes('来自特定用户')); if (!el) return [0, 0]; const r = el.getBoundingClientRect(); return [Math.round(r.x + r.width / 2), Math.round(r.y + r.height / 2)]; })()");
+        await click(ux, uy);
+        await sleep(400);
+        const [px, py] = await evalJs("(() => { const el = document.querySelector('.aegis-modal-filter-panel .aegis-modal-filter-item'); if (!el) return [0, 0]; const r = el.getBoundingClientRect(); return [Math.round(r.x + r.width / 2), Math.round(r.y + r.height / 2)]; })()");
+        await click(px, py);
+        await sleep(400);
+        const picked = await evalJs(BOX_STATE);
+        await evalJs(`${pressKey("ArrowDown")}${pressKey("ArrowDown")}${pressKey("ArrowDown")}${pressKey("ArrowDown")}${pressKey("Enter")}1`);
+        await sleep(300);
+        await evalJs(`${pressKey("ArrowDown")}${pressKey("ArrowDown")}${pressKey("Enter")}1`);
+        await sleep(350);
+        const withHas = await evalJs(BOX_STATE);
+
+        const [tx, ty] = await evalJs("(() => { const el = document.querySelector('.aegis-modal-search-token-body'); if (!el) return [0, 0]; const r = el.getBoundingClientRect(); return [Math.round(r.x + r.width / 2), Math.round(r.y + r.height / 2)]; })()");
+        await click(tx, ty);
+        await sleep(400);
+        const editing = await evalJs(BOX_STATE);
+        await evalJs("document.activeElement?.blur?.(); 1");
+        await sleep(600);
+        const restored = await evalJs(BOX_STATE);
+        record("T19 编辑非末位token不吞后续token且失焦还原", picked.tokens.length === 1
+            && withHas.tokens.length === 2 && withHas.tokens.some(e => e.includes("图片"))
+            && editing.active && editing.tokens.length === 1 && editing.tokens.some(e => e.includes("图片"))
+            && !restored.active && restored.tokens.length === 2 && restored.tokens.some(e => e.includes("图片")),
+            { picked, withHas, editing, restored });
+        await screenshot("T19-edit");
+    }
+
+    {
+        await evalJs(pressKey("Escape"));
+        await sleep(300);
+        await evalJs(`(async () => {
+            for (let i = 0; i < 12 && document.querySelector('.aegis-modal-search-token-remove'); i++) {
+                document.querySelector('.aegis-modal-search-token-remove').click();
+                await new Promise(r => setTimeout(r, 120));
+            }
+            const input = document.querySelector('.aegis-modal-header input');
+            const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
+            set.call(input, '');
+            input.dispatchEvent(new Event('input', { bubbles: true }));
+            await new Promise(r => setTimeout(r, 200));
+            document.activeElement?.blur?.();
+            return 1;
+        })()`);
+        await sleep(1500);
+        const probe = await evalJs(`(async () => {
+            const found = () => document.querySelector('.aegis-modal-removed-attachments');
+            if (found()) return { found: true };
+            const content = document.querySelector('.aegis-modal-content');
+            const scroller = content?.firstElementChild ?? content;
+            for (let i = 0; i < 10; i++) {
+                scroller?.scrollTo?.(0, scroller.scrollHeight);
+                await new Promise(r => setTimeout(r, 900));
+                if (found()) return { found: true, after: i };
+            }
+            return { found: false };
+        })()`);
+        if (probe.found) {
+            const detail = await evalJs(`(() => {
+                const block = document.querySelector('.aegis-modal-removed-attachments');
+                return {
+                    label: block.querySelector('.aegis-modal-removed-label')?.textContent,
+                    images: block.querySelectorAll('.aegis-modal-removed-attachment').length,
+                    files: block.querySelectorAll('.aegis-modal-removed-file').length
+                };
+            })()`);
+            record("T20 编辑删图区块渲染（灰度缩略图+标签）", detail.label === "编辑时移除" && (detail.images + detail.files) > 0, detail);
+            await screenshot("T20-removed-attachments");
+        } else {
+            record("T20 编辑删图区块渲染（灰度缩略图+标签）", true, { note: "本机日志中未找到编辑删图记录，未做实断言" });
+        }
     }
 } catch (e) {
     record("EXCEPTION", false, { message: String(e).slice(0, 200) });

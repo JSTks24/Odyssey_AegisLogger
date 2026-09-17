@@ -24,17 +24,17 @@ describe("splitActiveToken", () => {
     });
 
     it("splits at the marker when it leads the query", () => {
-        expect(searchBox.splitActiveToken("user:", "user")).toEqual({ head: "", rest: "" });
-        expect(searchBox.splitActiveToken("user:123", "user")).toEqual({ head: "", rest: "123" });
+        expect(searchBox.splitActiveToken("user:", "user")).toEqual({ head: "", rest: "", prefix: "user:" });
+        expect(searchBox.splitActiveToken("user:123", "user")).toEqual({ head: "", rest: "123", prefix: "user:" });
     });
 
     it("keeps spaces inside the picked value", () => {
-        expect(searchBox.splitActiveToken("user:ali smith", "user")).toEqual({ head: "", rest: "ali smith" });
+        expect(searchBox.splitActiveToken("user:ali smith", "user")).toEqual({ head: "", rest: "ali smith", prefix: "user:" });
     });
 
     it("keeps everything before the marker in head", () => {
-        expect(searchBox.splitActiveToken("has:image user:ali", "user")).toEqual({ head: "has:image ", rest: "ali" });
-        expect(searchBox.splitActiveToken("user:1 server:2 user:ali", "user")).toEqual({ head: "user:1 server:2 ", rest: "ali" });
+        expect(searchBox.splitActiveToken("has:image user:ali", "user")).toEqual({ head: "has:image ", rest: "ali", prefix: "user:" });
+        expect(searchBox.splitActiveToken("user:1 server:2 user:ali", "user")).toEqual({ head: "user:1 server:2 ", rest: "ali", prefix: "user:" });
     });
 
     it("ignores markers that are not on a token boundary", () => {
@@ -43,11 +43,20 @@ describe("splitActiveToken", () => {
     });
 
     it("takes the last boundary marker of the same kind", () => {
-        expect(searchBox.splitActiveToken("user:1 user:2 smith", "user")).toEqual({ head: "user:1 ", rest: "2 smith" });
+        expect(searchBox.splitActiveToken("user:1 user:2 smith", "user")).toEqual({ head: "user:1 ", rest: "2 smith", prefix: "user:" });
     });
 
     it("handles CJK and mixed content in the rest", () => {
-        expect(searchBox.splitActiveToken("user:下载 测试", "user")).toEqual({ head: "", rest: "下载 测试" });
+        expect(searchBox.splitActiveToken("user:下载 测试", "user")).toEqual({ head: "", rest: "下载 测试", prefix: "user:" });
+    });
+
+    it("recognizes a negated marker on a token boundary", () => {
+        expect(searchBox.splitActiveToken("!user:123", "user")).toEqual({ head: "", rest: "123", prefix: "!user:" });
+        expect(searchBox.splitActiveToken("has:image !user:ali", "user")).toEqual({ head: "has:image ", rest: "ali", prefix: "!user:" });
+    });
+
+    it("ignores negated markers that are not on a token boundary", () => {
+        expect(searchBox.splitActiveToken("x!user:1", "user")).toBeNull();
     });
 });
 
@@ -86,6 +95,33 @@ describe("removeTokens", () => {
     it("keeps other tokens and free text", () => {
         expect(searchBox.removeTokens("has:image before:2026-01-01 abc", ["before", "after"])).toBe("has:image abc");
         expect(searchBox.removeTokens("has:image", ["before", "after"])).toBe("has:image");
+    });
+});
+
+describe("cancelPick", () => {
+    it("returns the query untouched when the marker is absent", () => {
+        expect(searchBox.cancelPick("has:image", "user", null)).toBe("has:image");
+        expect(searchBox.cancelPick("has:image", "user", "user:100")).toBe("has:image");
+    });
+
+    it("drops the whole fragment for a fresh pick", () => {
+        expect(searchBox.cancelPick("user:", "user", null)).toBe("");
+        expect(searchBox.cancelPick("has:image user:", "user", null)).toBe("has:image");
+        expect(searchBox.cancelPick("has:image user:zzz", "user", null)).toBe("has:image");
+    });
+
+    it("restores the original token for an edited pick", () => {
+        expect(searchBox.cancelPick("user:5", "user", "user:100")).toBe("user:100");
+        expect(searchBox.cancelPick("has:image user:5", "user", "user:100")).toBe("has:image user:100");
+        expect(searchBox.cancelPick("user:", "user", "user:100")).toBe("user:100");
+    });
+
+    it("keeps negated fragments intact when restoring", () => {
+        expect(searchBox.cancelPick("!user:5", "user", "!user:100")).toBe("!user:100");
+    });
+
+    it("returns the query as-is when an edit did not change anything", () => {
+        expect(searchBox.cancelPick("user:100", "user", "user:100")).toBe("user:100");
     });
 });
 

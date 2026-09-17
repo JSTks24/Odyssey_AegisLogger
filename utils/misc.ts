@@ -21,7 +21,7 @@ import { findByCodeLazy, findLazy } from "@webpack";
 import { ChannelStore, moment, UserStore } from "@webpack/common";
 
 import { DBMessageStatus } from "../db";
-import { LoggedMessageJSON } from "../types";
+import { LoggedAttachment, LoggedMessageJSON } from "../types";
 import { DEFAULT_IMAGE_CACHE_DIR } from "./constants";
 import { DISCORD_EPOCH } from "./index";
 import { memoize } from "./memoize";
@@ -88,6 +88,23 @@ export const mapTimestamp = (m: any) => {
     return m;
 };
 
+
+export function splitRemovedAttachments(attachments?: LoggedAttachment[] | null) {
+    const live: LoggedAttachment[] = [];
+    const removed: LoggedAttachment[] = [];
+
+    for (const attachment of attachments ?? []) {
+        if (attachment.deleted) removed.push(attachment);
+        else live.push(attachment);
+    }
+
+    return { live, removed };
+}
+
+export function isImageAttachment(attachment: LoggedAttachment) {
+    if (attachment.content_type?.startsWith("image")) return true;
+    return /\.(png|jpe?g|gif|webp|bmp|avif|apng)$/i.test(attachment.filename ?? "");
+}
 
 export const messageJsonToMessageClass = memoize((log: { message: LoggedMessageJSON; }) => {
     if (!log?.message) return null;

@@ -32,8 +32,10 @@ import {
     getMessageStatus,
     hasPingged,
     isGhostPinged,
+    isImageAttachment,
     parseJSON,
-    sortMessagesByDate
+    sortMessagesByDate,
+    splitRemovedAttachments
 } from "../utils/misc";
 
 beforeEach(() => {
@@ -154,6 +156,41 @@ describe("findLastIndex", () => {
     it("returns -1 when nothing matches", () => {
         expect(findLastIndex([1, 2, 3], e => e === 99)).toBe(-1);
         expect(findLastIndex([], () => true)).toBe(-1);
+    });
+});
+
+describe("splitRemovedAttachments", () => {
+    const live = { id: "a", filename: "a.png", url: "u" } as any;
+    const removed = { id: "b", filename: "b.png", url: "u", deleted: true } as any;
+
+    it("separates deleted attachments from surviving ones", () => {
+        expect(splitRemovedAttachments([live, removed])).toEqual({ live: [live], removed: [removed] });
+    });
+
+    it("keeps every attachment live when none is marked deleted", () => {
+        const split = splitRemovedAttachments([live]);
+
+        expect(split.live).toEqual([live]);
+        expect(split.removed).toEqual([]);
+    });
+
+    it("returns empty buckets for missing or empty input", () => {
+        expect(splitRemovedAttachments(undefined)).toEqual({ live: [], removed: [] });
+        expect(splitRemovedAttachments(null)).toEqual({ live: [], removed: [] });
+        expect(splitRemovedAttachments([])).toEqual({ live: [], removed: [] });
+    });
+});
+
+describe("isImageAttachment", () => {
+    it("detects images by content type", () => {
+        expect(isImageAttachment({ content_type: "image/png" } as any)).toBe(true);
+        expect(isImageAttachment({ content_type: "video/mp4" } as any)).toBe(false);
+    });
+
+    it("falls back to the filename extension", () => {
+        expect(isImageAttachment({ filename: "photo.JPEG" } as any)).toBe(true);
+        expect(isImageAttachment({ filename: "clip.mp4" } as any)).toBe(false);
+        expect(isImageAttachment({} as any)).toBe(false);
     });
 });
 

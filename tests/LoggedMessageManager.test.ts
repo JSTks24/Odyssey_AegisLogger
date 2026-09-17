@@ -82,7 +82,7 @@ describe("addMessage", () => {
         expect(vi.mocked(idb.connection.count)).not.toHaveBeenCalled();
     });
 
-    it("caches images only for deleted messages while saveImages is enabled", async () => {
+    it("caches images for deleted messages while saveImages is enabled", async () => {
         settings.store.saveImages = true;
         const message = makeMessage();
 
@@ -94,10 +94,36 @@ describe("addMessage", () => {
         settings.store.saveImages = false;
         await addMessage(makeMessage(), DBMessageStatus.DELETED);
 
+        expect(vi.mocked(cacheMessageImages)).toHaveBeenCalledTimes(1);
+    });
+
+    it("caches only the removed attachments for edited messages", async () => {
         settings.store.saveImages = true;
-        await addMessage(makeMessage(), DBMessageStatus.EDITED);
+        const kept = { id: "a1", filename: "kept.png" } as any;
+        const removed = { id: "a2", filename: "removed.png", deleted: true } as any;
+        const message = makeMessage({ attachments: [kept, removed], editHistory: [{ content: "old", timestamp: "2026-01-01T00:00:00.000Z" }] });
+
+        await addMessage(message, DBMessageStatus.EDITED);
 
         expect(vi.mocked(cacheMessageImages)).toHaveBeenCalledTimes(1);
+        const [cachedMessage, filter] = vi.mocked(cacheMessageImages).mock.calls[0] as any[];
+        expect(cachedMessage).toBe(message);
+        expect(filter(kept)).toBe(false);
+        expect(filter(removed)).toBe(true);
+    });
+
+    it("does not cache edited messages that removed nothing", async () => {
+        settings.store.saveImages = true;
+
+        await addMessage(makeMessage({ attachments: [{ id: "a1" }] }), DBMessageStatus.EDITED);
+
+        expect(vi.mocked(cacheMessageImages)).not.toHaveBeenCalled();
+    });
+
+    it("does not cache edited messages while saveImages is disabled", async () => {
+        await addMessage(makeMessage({ attachments: [{ id: "a1", deleted: true }] }), DBMessageStatus.EDITED);
+
+        expect(vi.mocked(cacheMessageImages)).not.toHaveBeenCalled();
     });
 
     it("never trims the database when messageLimit is 0", async () => {

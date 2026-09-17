@@ -20,7 +20,7 @@ import { Alerts, ChannelStore, ContextMenuApi, FluxDispatcher, GuildMemberStore,
 import idb, { DBMessageRecord } from "../db";
 import { settings } from "../index";
 import { LoggedMessage, LoggedMessageJSON } from "../types";
-import { getGuildIdByChannel, messageJsonToMessageClass } from "../utils";
+import { getGuildIdByChannel, isImageAttachment, messageJsonToMessageClass, splitRemovedAttachments } from "../utils";
 import { t, tabDisplayName } from "../utils/i18n";
 import searchIndex from "../utils/searchIndex";
 import { importLogs } from "../utils/settingsUtils";
@@ -71,11 +71,37 @@ function resolveLazyModules() {
     }
 }
 
+function pickFromModule(found: unknown, filter: (m: any) => boolean) {
+    if (found == null) return null;
+    if (filter(found)) return found;
+    if (typeof found !== "object") return null;
+
+    for (const key in found as Record<string, unknown>) {
+        const value = (found as Record<string, unknown>)[key];
+        if (value != null && filter(value)) return value;
+    }
+
+    return null;
+}
+
+function adoptLazyModules(found: unknown) {
+    if (messagePreviewComponent == null) {
+        const hit = pickFromModule(found, MESSAGE_PREVIEW_FILTER);
+        if (hit) messagePreviewComponent = hit as React.ComponentType<MessagePreviewProps>;
+    }
+
+    if (privateChannelRecord == null) {
+        const hit = pickFromModule(found, getPrivateChannelFilter());
+        if (hit) privateChannelRecord = hit;
+    }
+}
+
 function subscribeLazyModules() {
     if (lazyModulesSubscribed) return;
     lazyModulesSubscribed = true;
 
-    const notify = () => {
+    const notify = (found?: unknown) => {
+        adoptLazyModules(found);
         resolveLazyModules();
         lazyModuleListeners.forEach(listener => listener());
     };
@@ -380,7 +406,11 @@ function formatLogDate(value: string | Date | undefined | null) {
 
 function LMessage({ message: record, isGroupStart, reset, addQueryToken }: LMessageProps) {
     const { messagePreview: MessagePreview, privateChannelRecord: PrivateChannelRecord } = useLazyModules();
-    const message = useMemo(() => messageJsonToMessageClass({ message: record }), [record]);
+    const { message, removedAttachments } = useMemo(() => {
+        const { live, removed } = splitRemovedAttachments(record.attachments);
+        const source = removed.length > 0 ? { ...record, attachments: live } : record;
+        return { message: messageJsonToMessageClass({ message: source }), removedAttachments: removed };
+    }, [record]);
 
     if (!message) return null;
 
@@ -565,6 +595,27 @@ function LMessage({ message: record, isGroupStart, reset, addQueryToken }: LMess
                     isGroupStart={isGroupStart}
                     hideSimpleEmbedContent={false}
                 />
+            )}
+            {removedAttachments.length > 0 && (
+                <div className={cl("removed-attachments")}>
+                    <div className={cl("removed-label")}>{t("modal.attachmentRemoved")}</div>
+                    <div className={cl("removed-row")}>
+                        {removedAttachments.map(attachment => isImageAttachment(attachment)
+                            ? (
+                                <img
+                                    key={attachment.id}
+                                    className={cl("removed-attachment")}
+                                    src={attachment.url}
+                                    alt={attachment.filename ?? ""}
+                                />
+                            )
+                            : (
+                                <span key={attachment.id} className={cl("removed-file")}>
+                                    {attachment.filename ?? attachment.id}
+                                </span>
+                            ))}
+                    </div>
+                </div>
             )}
         </div>
         </div>

@@ -54,9 +54,15 @@ export function isAttachmentGoodToCache(attachment: MessageAttachment, fileExten
     return true;
 }
 
-export async function cacheMessageImages(message: LoggedMessage | LoggedMessageJSON) {
+export async function cacheMessageImages(message: LoggedMessage | LoggedMessageJSON, filter?: (attachment: LoggedAttachment) => boolean) {
     try {
         for (const attachment of message.attachments) {
+            if (filter != null && !filter(attachment))
+                continue;
+
+            if (attachment.path != null)
+                continue;
+
             const fileExtension = getFileExtension(attachment.filename ?? attachment.url) ?? attachment.content_type?.split("/")?.[1] ?? ".png";
 
             if (!isAttachmentGoodToCache(attachment, fileExtension)) {

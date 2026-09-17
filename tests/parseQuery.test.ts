@@ -51,6 +51,39 @@ describe("tokenizeQuery", () => {
     });
 });
 
+describe("value validation", () => {
+    it("falls back to free text for unknown has values", () => {
+        const { queries, rest } = tokenizeQuery("has:zzz");
+        expect(queries).toHaveLength(0);
+        expect(rest).toEqual(["has:zzz"]);
+    });
+
+    it("falls back to free text for malformed dates", () => {
+        const { queries, rest } = tokenizeQuery("before:garbage after:2026-02-30 around:2026-13-01 near:2026-1-1");
+        expect(queries).toHaveLength(0);
+        expect(rest).toEqual(["before:garbage", "after:2026-02-30", "around:2026-13-01", "near:2026-1-1"]);
+    });
+
+    it("falls back to free text for non numeric message ids", () => {
+        const { queries, rest } = tokenizeQuery("message:abc");
+        expect(queries).toHaveLength(0);
+        expect(rest).toEqual(["message:abc"]);
+    });
+
+    it("keeps tokens with valid values", () => {
+        const { queries, rest } = tokenizeQuery("has:image before:2026-02-28 after:2024-01-31 message:123");
+        expect(queries.map(q => q.key)).toEqual(["has", "before", "after", "message"]);
+        expect(rest).toHaveLength(0);
+    });
+
+    it("keeps negation only for valid values", () => {
+        const { queries, rest } = tokenizeQuery("!has:zzz !before:2026-01-01");
+        expect(queries).toHaveLength(1);
+        expect(queries[0]).toMatchObject({ key: "before", value: "2026-01-01", negate: true });
+        expect(rest).toEqual(["!has:zzz"]);
+    });
+});
+
 describe("doesMatch", () => {
     it("matches server by id and name", () => {
         expect(doesMatch("server", "guild-1", msg)).toBe(true);

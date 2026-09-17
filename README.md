@@ -22,14 +22,14 @@
    git clone https://github.com/JSTks24/Odyssey_AegisLogger.git
    ```
 
-2. 双击仓库根目录的 `install.cmd`。脚本会检查并补齐 Node.js / pnpm 环境，拉取 Vencord 源码，编译本插件并注入 Discord，过程中需要确认的地方都有提示。
+2. 双击仓库根目录的 `install.cmd`。脚本会检查并补齐 Node.js / pnpm 环境，把 Vencord 源码克隆到**本目录下的 `Vencord\`**，编译本插件并注入 Discord，过程中需要确认的地方都有提示。脚本产生的文件全部留在这个目录里，不会写进您的用户目录；卸载时删掉整个文件夹即可。
 3. 如果网络不通（GitHub 直连失败），带代理地址重跑：
 
    ```
    install.cmd http://127.0.0.1:7890
    ```
 
-安装完成后重启 Discord，到 设置 → Vencord → 插件 里启用 AegisLogger。以后想更新插件，重新跑一遍 `install.cmd` 即可，脚本可以反复执行。
+安装完成后重启 Discord，到 设置 → Vencord → 插件 里启用 AegisLogger。以后想更新插件，重新跑一遍 `install.cmd` 即可，脚本可以反复执行。Vencord 自己的设置目录是 `%APPDATA%\Vencord`，由 Vencord 自身维护，与本脚本无关。
 
 ### 手动安装
 

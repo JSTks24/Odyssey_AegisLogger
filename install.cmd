@@ -6,24 +6,26 @@ title Odyssey AegisLogger 一键安装
 rem ============================================================
 rem  Odyssey AegisLogger 一键安装
 rem  自动准备 Node/pnpm 环境，拉取 Vencord 源码，编译本插件并
-rem  注入 Discord。可反复运行：已有环境会被更新，不会残留垃圾。
+rem  注入 Discord。所有文件都放在本脚本所在的目录里，不会写进
+rem  用户目录。可反复运行：已有环境会被更新，不会残留垃圾。
 rem
 rem  用法:   install.cmd [代理地址] [Vencord目录]
 rem  示例:   install.cmd http://127.0.0.1:7890
 rem ============================================================
 
-set "PROXY=%~1"
-set "VENCORD_DIR=%~2"
-if "%VENCORD_DIR%"=="" set "VENCORD_DIR=%USERPROFILE%\Vencord"
-
 set "SCRIPT_DIR=%~dp0"
 if "%SCRIPT_DIR:~-1%"=="\" set "SCRIPT_DIR=%SCRIPT_DIR:~0,-1%"
+
+set "PROXY=%~1"
+set "VENCORD_DIR=%~2"
+if "%VENCORD_DIR%"=="" set "VENCORD_DIR=%SCRIPT_DIR%\Vencord"
+
 set "PLUGIN_NAME=odyssey-aegis-logger"
 set "USERPLUGIN=%VENCORD_DIR%\src\userplugins\%PLUGIN_NAME%"
 set "INSTALLER_DIR=%VENCORD_DIR%\dist\Installer"
 set "INSTALLER=%INSTALLER_DIR%\VencordInstallerCli.exe"
 set "INSTALLER_URL=https://github.com/Vencord/Installer/releases/latest/download/VencordInstallerCli.exe"
-set "TEMP_EXE=%TEMP%\VencordInstallerCli_%RANDOM%.exe"
+set "INSTALLER_TMP=%INSTALLER_DIR%\VencordInstallerCli.exe.download"
 
 set "GIT_PROXY="
 if defined PROXY set "GIT_PROXY=-c http.proxy=%PROXY% -c https.proxy=%PROXY%"
@@ -32,6 +34,7 @@ if defined PROXY set "CURL_PROXY=--proxy %PROXY%"
 
 echo ============================================
 echo   Odyssey AegisLogger 一键安装
+echo   本目录: %SCRIPT_DIR%
 echo   Vencord 源码目录: %VENCORD_DIR%
 if defined PROXY echo   代理: %PROXY%
 echo ============================================
@@ -39,6 +42,21 @@ echo.
 
 if not exist "%SCRIPT_DIR%\settings.tsx" (
     set "FAILMSG=未在脚本目录找到插件源码（settings.tsx）。请完整下载本仓库后再运行，不要单独移动 install.cmd。"
+    goto :fail
+)
+
+for %%i in ("%VENCORD_DIR%") do set "VENCORD_ABS=%%~fi"
+if "%VENCORD_ABS:~-1%"=="\" set "VENCORD_ABS=%VENCORD_ABS:~0,-1%"
+if /i "%VENCORD_ABS%"=="%SCRIPT_DIR%" (
+    set "FAILMSG=Vencord 目录不能就是本仓库目录。请换一个位置重跑本脚本。"
+    goto :fail
+)
+if exist "%VENCORD_DIR%\install.cmd" (
+    set "FAILMSG=目标目录里已经是本插件仓库，请不要在仓库目录里拉取 Vencord。请换一个位置重跑本脚本。"
+    goto :fail
+)
+if exist "%VENCORD_DIR%" if not exist "%VENCORD_DIR%\.git" (
+    set "FAILMSG=目标目录已存在且不是 Vencord 仓库：%VENCORD_DIR%。为避免误删，请手动删除该目录或换一个位置后重跑本脚本。"
     goto :fail
 )
 
@@ -60,8 +78,8 @@ if %NODE_MAJOR% LSS 22 (
     goto :fail
 )
 where pnpm >nul 2>&1 && goto :pnpm_ok
-echo   未找到 pnpm，正在通过 npm 自动安装...
-call npm install -g pnpm >nul 2>&1
+echo   未找到 pnpm，正在通过 npm 全局安装（装到 npm 的全局目录，可用 npm root -g 查看位置）...
+call npm install -g pnpm
 where pnpm >nul 2>&1 && goto :pnpm_ok
 set "FAILMSG=无法自动安装 pnpm。请手动执行 npm install -g pnpm，或参考 https://pnpm.io/installation ，然后重新运行本脚本。"
 goto :fail
@@ -83,8 +101,7 @@ if exist "%VENCORD_DIR%\.git" (
     git clean -fd >nul 2>&1
     popd
 ) else (
-    if exist "%VENCORD_DIR%" rd /s /q "%VENCORD_DIR%"
-    echo   首次克隆，可能需要几分钟...
+    echo   首次克隆到本目录，可能需要几分钟...
     git !GIT_PROXY! clone https://github.com/Vendicated/Vencord.git "%VENCORD_DIR%"
     if errorlevel 1 (
         if exist "%VENCORD_DIR%" rd /s /q "%VENCORD_DIR%"
@@ -135,29 +152,29 @@ if exist "%INSTALLER%" (
     goto :installer_ok
 )
 if not exist "%INSTALLER_DIR%" mkdir "%INSTALLER_DIR%"
-del "%TEMP_EXE%" >nul 2>&1
+del "%INSTALLER_TMP%" >nul 2>&1
 where curl >nul 2>&1
 if errorlevel 1 goto :ps_download
-curl -fL !CURL_PROXY! -o "%TEMP_EXE%" "%INSTALLER_URL%"
+curl -fL !CURL_PROXY! -o "%INSTALLER_TMP%" "%INSTALLER_URL%"
 if errorlevel 1 (
     if defined PROXY goto :ps_download
-    del "%TEMP_EXE%" >nul 2>&1
+    del "%INSTALLER_TMP%" >nul 2>&1
     set "FAILMSG=安装器下载失败（网络原因）。可带代理重跑，例如: install.cmd http://127.0.0.1:7890"
     goto :fail
 )
 goto :move_installer
 :ps_download
 echo   使用 PowerShell 下载...
-powershell -NoProfile -Command "[Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12; $p=@{}; If('%PROXY%' -ne ''){ $p.Proxy='%PROXY%' }; Invoke-WebRequest -Uri '%INSTALLER_URL%' -OutFile '%TEMP_EXE%' @p"
+powershell -NoProfile -Command "[Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12; $p=@{}; If('%PROXY%' -ne ''){ $p.Proxy='%PROXY%' }; Invoke-WebRequest -Uri '%INSTALLER_URL%' -OutFile '%INSTALLER_TMP%' @p"
 if errorlevel 1 (
-    del "%TEMP_EXE%" >nul 2>&1
+    del "%INSTALLER_TMP%" >nul 2>&1
     set "FAILMSG=安装器下载失败。可手动下载 %INSTALLER_URL% 并改名为 VencordInstallerCli.exe 放到 %INSTALLER_DIR% ，然后重新运行本脚本。"
     goto :fail
 )
 :move_installer
-move /y "%TEMP_EXE%" "%INSTALLER%" >nul 2>&1
+move /y "%INSTALLER_TMP%" "%INSTALLER%" >nul 2>&1
 if errorlevel 1 (
-    del "%TEMP_EXE%" >nul 2>&1
+    del "%INSTALLER_TMP%" >nul 2>&1
     set "FAILMSG=安装器文件移动失败，请重跑本脚本。"
     goto :fail
 )
@@ -200,6 +217,11 @@ if /i not "!START!"=="n" (
 echo.
 echo ============================================
 echo   安装完成！
+echo   本次产生的文件都在本目录内，卸载时删掉整个目录即可：
+echo     Vencord 源码: %VENCORD_DIR%
+echo     插件源码链接: %USERPLUGIN% -^> %SCRIPT_DIR%
+echo     安装器: %INSTALLER%
+echo.
 echo   重启 Discord 后打开 设置 -^> Vencord -^> 插件，
 echo   搜索并启用 AegisLogger 即可使用。
 echo ============================================
