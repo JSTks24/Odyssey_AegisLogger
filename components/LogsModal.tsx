@@ -19,7 +19,7 @@ import { Alerts, ChannelStore, ContextMenuApi, FluxDispatcher, GuildMemberStore,
 
 import idb, { DBMessageRecord } from "../db";
 import { settings } from "../index";
-import { LoggedMessage, LoggedMessageJSON } from "../types";
+import { LoggedAttachment, LoggedMessage, LoggedMessageJSON } from "../types";
 import { getGuildIdByChannel, isImageAttachment, messageJsonToMessageClass, splitRemovedAttachments } from "../utils";
 import { t, tabDisplayName } from "../utils/i18n";
 import searchIndex from "../utils/searchIndex";
@@ -600,25 +600,44 @@ function LMessage({ message: record, isGroupStart, reset, addQueryToken }: LMess
                 <div className={cl("removed-attachments")}>
                     <div className={cl("removed-label")}>{t("modal.attachmentRemoved")}</div>
                     <div className={cl("removed-row")}>
-                        {removedAttachments.map(attachment => isImageAttachment(attachment)
-                            ? (
-                                <img
-                                    key={attachment.id}
-                                    className={cl("removed-attachment")}
-                                    src={attachment.url}
-                                    alt={attachment.filename ?? ""}
-                                />
-                            )
-                            : (
-                                <span key={attachment.id} className={cl("removed-file")}>
-                                    {attachment.filename ?? attachment.id}
-                                </span>
-                            ))}
+                        {removedAttachments.map(attachment => (
+                            <RemovedAttachment key={attachment.id} attachment={attachment} />
+                        ))}
                     </div>
                 </div>
             )}
         </div>
         </div>
+    );
+}
+
+function RemovedAttachment({ attachment }: { attachment: LoggedAttachment; }) {
+    const [failed, setFailed] = useState(false);
+
+    if (!isImageAttachment(attachment)) {
+        return (
+            <span className={cl("removed-file")}>
+                {attachment.filename ?? attachment.id}
+            </span>
+        );
+    }
+
+    if (failed) {
+        return (
+            <span className={cl("removed-file")}>
+                {attachment.filename ?? attachment.id}
+                <span className={cl("removed-file-note")}> · {t("modal.attachmentUnavailable")}</span>
+            </span>
+        );
+    }
+
+    return (
+        <img
+            className={cl("removed-attachment")}
+            src={attachment.url}
+            alt={attachment.filename ?? ""}
+            onError={() => setFailed(true)}
+        />
     );
 }
 

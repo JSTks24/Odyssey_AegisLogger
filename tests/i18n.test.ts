@@ -12,7 +12,7 @@ vi.mock("../settings", () => ({
     settings: { store: mockStore }
 }));
 
-import { getLocale, t, tabDisplayName } from "../utils/i18n";
+import { getLocale, removedAttachmentLabelCss, t, tabDisplayName } from "../utils/i18n";
 
 describe("i18n", () => {
     beforeEach(() => {
@@ -49,6 +49,14 @@ describe("i18n", () => {
 
     it("returns the key itself when missing", () => {
         expect(t("nonexistent.key")).toBe("nonexistent.key");
+    });
+
+    it("quotes the removed-attachment label for css content", () => {
+        vi.stubGlobal("navigator", { language: "zh-CN" });
+        expect(removedAttachmentLabelCss()).toBe('"编辑时移除"');
+
+        vi.stubGlobal("navigator", { language: "en-US" });
+        expect(removedAttachmentLabelCss()).toBe('"Removed in edit"');
     });
 
     it("maps tab enum values to display names", () => {

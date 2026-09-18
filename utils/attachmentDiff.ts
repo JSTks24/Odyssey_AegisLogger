@@ -4,13 +4,20 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
-import { LoggedAttachment } from "../types";
+import { MessageJSON } from "@vencord/discord-types";
+
+import { LoggedAttachment, LoggedEdit, LoggedMessageJSON } from "../types";
 
 export interface AttachmentDiff {
     changed: boolean;
     added: LoggedAttachment[];
     removed: LoggedAttachment[];
     merged: LoggedAttachment[];
+}
+
+export interface RemovedAttachmentMerge {
+    attachments: LoggedAttachment[];
+    editHistory: LoggedEdit[];
 }
 
 const hasId = (a: LoggedAttachment | undefined | null): a is LoggedAttachment & { id: string } =>
@@ -35,5 +42,36 @@ export function diffAttachments(
         added,
         removed,
         merged
+    };
+}
+
+export function mergeRemovedAttachments(
+    previousAttachments: LoggedAttachment[] | undefined | null,
+    base: LoggedMessageJSON,
+    payloadMessage: MessageJSON
+): RemovedAttachmentMerge | null {
+    const payloadAttachments = payloadMessage.attachments as LoggedAttachment[] | undefined;
+
+    if (payloadAttachments == null || previousAttachments == null) return null;
+
+    const diff = diffAttachments(previousAttachments, payloadAttachments);
+
+    if (!diff.changed) return null;
+
+    const editHistory = base.editHistory ?? [];
+    const last = editHistory[editHistory.length - 1];
+
+    return {
+        attachments: diff.merged,
+        editHistory: last != null
+            ? [...editHistory.slice(0, -1), { ...last, attachments: diff.merged }]
+            : [
+                ...editHistory,
+                {
+                    content: base.content ?? "",
+                    timestamp: payloadMessage.edited_timestamp ?? (new Date()).toISOString(),
+                    attachments: diff.merged
+                }
+            ]
     };
 }

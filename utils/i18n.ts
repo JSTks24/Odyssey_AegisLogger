@@ -124,6 +124,7 @@ const en: Record<string, string> = {
     "modal.context.deleted": "deleted {time}",
     "modal.context.edited": "edited {time}",
     "modal.attachmentRemoved": "Removed in edit",
+    "modal.attachmentUnavailable": "Original lost (not archived)",
     "modal.menu.ariaLabel": "Message Logger",
     "modal.menu.jump": "Jump To Message",
     "modal.menu.profile": "Open user profile",
@@ -365,6 +366,7 @@ const zhCN: Record<string, string> = {
     "modal.context.deleted": "删除于 {time}",
     "modal.context.edited": "编辑于 {time}",
     "modal.attachmentRemoved": "编辑时移除",
+    "modal.attachmentUnavailable": "原图已失效（未本地存档）",
     "modal.menu.ariaLabel": "消息记录器",
     "modal.menu.jump": "跳转到消息",
     "modal.menu.profile": "打开用户资料",
@@ -512,6 +514,10 @@ export function t(key: string, params?: Record<string, string | number>): string
             text = text.replaceAll(`{${name}}`, String(value));
     }
     return text;
+}
+
+export function removedAttachmentLabelCss(): string {
+    return JSON.stringify(t("modal.attachmentRemoved"));
 }
 
 export function tabDisplayName(tab: "Deleted" | "Edited" | "Ghost Pinged"): string {

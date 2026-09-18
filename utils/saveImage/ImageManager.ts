@@ -67,12 +67,41 @@ export async function downloadAttachment(attachemnt: LoggedAttachment): Promise<
 
     const { path, error } = await Native.downloadAttachment(attachemnt);
 
-    if (error || !path) {
-        logger.error("Failed to download attachment", error, path);
-        return;
+    if (!error && path) {
+        return path;
     }
 
-    return path;
+    const fallbackPath = await downloadAttachmentFromRenderer(attachemnt);
+
+    if (fallbackPath) {
+        return fallbackPath;
+    }
+
+    logger.error("Failed to download attachment", error, attachemnt?.id);
+
+    return;
+}
+
+async function downloadAttachmentFromRenderer(attachemnt: LoggedAttachment): Promise<string | undefined> {
+    if (!attachemnt?.url || !attachemnt?.id || !attachemnt?.fileExtension) return;
+
+    const filename = `${attachemnt.id}${attachemnt.fileExtension}`;
+
+    try {
+        const res = await fetch(attachemnt.url);
+
+        if (res.status !== 200) {
+            logger.error("Renderer fallback failed to download attachment", attachemnt.id, res.status);
+            return;
+        }
+
+        await Native.writeImageNative(filename, new Uint8Array(await res.arrayBuffer()));
+
+        return filename;
+    } catch (error: any) {
+        logger.error("Renderer fallback failed to download attachment", attachemnt.id, error?.message);
+        return;
+    }
 }
 
 export async function deleteImage(attachmentId: string): Promise<void> {

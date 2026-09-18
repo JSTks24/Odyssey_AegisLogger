@@ -501,18 +501,48 @@ try {
             return { found: false };
         })()`);
         if (probe.found) {
+            await sleep(900);
             const detail = await evalJs(`(() => {
                 const block = document.querySelector('.aegis-modal-removed-attachments');
+                const images = [...block.querySelectorAll('.aegis-modal-removed-attachment')];
                 return {
                     label: block.querySelector('.aegis-modal-removed-label')?.textContent,
-                    images: block.querySelectorAll('.aegis-modal-removed-attachment').length,
-                    files: block.querySelectorAll('.aegis-modal-removed-file').length
+                    images: images.length,
+                    files: block.querySelectorAll('.aegis-modal-removed-file').length,
+                    notes: block.querySelectorAll('.aegis-modal-removed-file-note').length,
+                    loaded: images.filter(img => img.complete && img.naturalWidth > 0).length,
+                    fromArchive: images.filter(img => img.src.startsWith('blob:')).length,
+                    broken: images.filter(img => img.complete && img.naturalWidth === 0).length
                 };
             })()`);
-            record("T20 编辑删图区块渲染（灰度缩略图+标签）", detail.label === "编辑时移除" && (detail.images + detail.files) > 0, detail);
+            record("T20 编辑删图区块渲染（灰度缩略图+标签，无破图）", detail.label === "编辑时移除"
+                && (detail.images + detail.files) > 0
+                && detail.broken === 0
+                && detail.loaded === detail.images, detail);
             await screenshot("T20-removed-attachments");
         } else {
-            record("T20 编辑删图区块渲染（灰度缩略图+标签）", true, { note: "本机日志中未找到编辑删图记录，未做实断言" });
+            record("T20 编辑删图区块渲染（灰度缩略图+标签，无破图）", true, { note: "本机日志中未找到编辑删图记录，未做实断言" });
+        }
+    }
+
+    {
+        const probe = await evalJs(`(async () => {
+            const P = window.Vencord?.Plugins?.plugins?.AegisLogger;
+            if (!P?.idb) return { skip: "插件未就绪" };
+            if (P.settings?.store?.saveImages !== true) return { skip: "图片存档未开启" };
+            const sample = [];
+            for (const status of ["DELETED", "EDITED"]) {
+                const records = await P.idb.getDateStortedMessagesByStatusIDB(true, 200, status);
+                for (const record of records) sample.push(...(record.message.attachments ?? []));
+            }
+            const cached = sample.filter(a => a.fileExtension != null);
+            const archived = cached.filter(a => typeof a.url === "string" && a.url.startsWith("blob:"));
+            return { sampled: sample.length, cached: cached.length, archived: archived.length };
+        })()`);
+        if (probe.skip || probe.cached === 0) {
+            record("T21 本地图片存档链路（抽样内至少一张图来自本地存档）", true, probe.skip ? { note: probe.skip } : { ...probe, note: "抽样内没有走过缓存的附件" });
+        } else {
+            record("T21 本地图片存档链路（抽样内至少一张图来自本地存档）", probe.archived > 0, probe);
         }
     }
 } catch (e) {

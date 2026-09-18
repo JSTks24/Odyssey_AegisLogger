@@ -8,7 +8,7 @@ import { readdir, readFile, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import { DATA_DIR } from "@main/utils/constants";
-import { dialog, IpcMainInvokeEvent, shell } from "electron";
+import { dialog, IpcMainInvokeEvent, net, shell } from "electron";
 
 import { getSettings, saveSettings } from "./settings";
 export * from "./export";
@@ -140,6 +140,20 @@ export async function chooseFile(_event: IpcMainInvokeEvent, title: string, filt
     return await readFile(path, "utf-8");
 }
 
+const fetchAttachment = async (event: IpcMainInvokeEvent, url: string) => {
+    const session = event?.sender?.session;
+
+    if (typeof session?.fetch === "function") {
+        return await session.fetch(url);
+    }
+
+    if (typeof net?.fetch === "function") {
+        return await net.fetch(url);
+    }
+
+    return await fetch(url);
+};
+
 export async function downloadAttachment(_event: IpcMainInvokeEvent, attachemnt: LoggedAttachment, attempts = 0, useOldUrl = false): Promise<{ error: string | null; path: string | null; }> {
     try {
         if (!attachemnt?.url || !attachemnt.oldUrl || !attachemnt?.id || !attachemnt?.fileExtension)
@@ -156,7 +170,7 @@ export async function downloadAttachment(_event: IpcMainInvokeEvent, attachemnt:
                 path: existingImage
             };
 
-        const res = await fetch(useOldUrl ? attachemnt.oldUrl : attachemnt.url);
+        const res = await fetchAttachment(_event, useOldUrl ? attachemnt.oldUrl : attachemnt.url);
 
         if (res.status !== 200) {
             if (res.status === 404 || res.status === 403 || res.status === 415)
@@ -190,6 +204,6 @@ export async function downloadAttachment(_event: IpcMainInvokeEvent, attachemnt:
 
     } catch (error: any) {
         console.error(error);
-        return { error: error.message, path: null };
+        return { error: `${error.message} (${error.cause?.code ?? "no-cause"})`, path: null };
     }
 }

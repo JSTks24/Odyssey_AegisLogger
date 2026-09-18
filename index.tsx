@@ -20,11 +20,11 @@ import idb, { DBMessageStatus } from "./db";
 import * as LoggedMessageManager from "./LoggedMessageManager";
 import { addMessage } from "./LoggedMessageManager";
 import { settings } from "./settings";
-import { FetchMessagesResponse, LoadMessagePayload, LoggedAttachment, LoggedMessage, LoggedMessageJSON, MessageCreatePayload, MessageDeleteBulkPayload, MessageDeletePayload, MessageUpdatePayload } from "./types";
+import { FetchMessagesResponse, LoadMessagePayload, LoggedMessage, LoggedMessageJSON, MessageCreatePayload, MessageDeleteBulkPayload, MessageDeletePayload, MessageUpdatePayload } from "./types";
 import { cleanUpCachedMessage, cleanupUserObject, contentExcluded, getIdList, getNative, isGhostPinged, mapTimestamp, messageJsonToMessageClass, reAddDeletedMessages } from "./utils";
-import { diffAttachments } from "./utils/attachmentDiff";
+import { mergeRemovedAttachments } from "./utils/attachmentDiff";
 import { removeContextMenuBindings, setupContextMenuPatches } from "./utils/contextMenu";
-import { t } from "./utils/i18n";
+import { removedAttachmentLabelCss, t } from "./utils/i18n";
 import { shouldIgnore } from "./utils/index";
 import { applyLegacyPluginSettings } from "./utils/legacySettings";
 import { LimitedMap } from "./utils/LimitedMap";
@@ -153,30 +153,19 @@ async function messageUpdateHandler(payload: MessageUpdatePayload) {
         hasEdits = message.editHistory != null && message.editHistory.length > 0;
     }
 
-    const payloadAttachments = payload.message.attachments as LoggedAttachment[] | undefined;
-    if (payloadAttachments != null && previous?.attachments != null && message != null) {
-        const diff = diffAttachments(previous.attachments, payloadAttachments);
-        if (diff.changed) {
-            const plain: LoggedMessageJSON = typeof (message as any).toJS === "function"
+    if (previous?.attachments != null) {
+        const base: LoggedMessageJSON = message == null
+            ? { ...previous }
+            : typeof (message as any).toJS === "function"
                 ? (message as any).toJS()
                 : { ...(message as any) };
 
-            plain.attachments = diff.merged;
+        const merged = mergeRemovedAttachments(previous.attachments, base, payload.message);
 
-            const entries = plain.editHistory ?? [];
-            const last = entries[entries.length - 1];
-            if (last != null) {
-                entries[entries.length - 1] = { ...last, attachments: diff.merged };
-            } else {
-                entries.push({
-                    content: plain.content ?? "",
-                    timestamp: (payload.message as any).edited_timestamp ?? (new Date()).toISOString(),
-                    attachments: diff.merged
-                });
-            }
-
-            plain.editHistory = entries;
-            message = plain;
+        if (merged != null) {
+            base.attachments = merged.attachments;
+            base.editHistory = merged.editHistory;
+            message = base;
             hasEdits = true;
         }
     }
@@ -253,6 +242,24 @@ async function processMessageFetch(response: FetchMessagesResponse) {
     } catch (e) {
         logger.error("Failed to fetch messages", e);
     }
+}
+
+const REMOVED_LABEL_STYLE_ID = "aegis-removed-label-style";
+
+function applyRemovedLabelStyle() {
+    let style = document.getElementById(REMOVED_LABEL_STYLE_ID) as HTMLStyleElement | null;
+
+    if (style == null) {
+        style = document.createElement("style");
+        style.id = REMOVED_LABEL_STYLE_ID;
+        document.head.appendChild(style);
+    }
+
+    style.textContent = `:root { --aegis-removed-label: ${removedAttachmentLabelCss()}; }`;
+}
+
+function removeRemovedLabelStyle() {
+    document.getElementById(REMOVED_LABEL_STYLE_ID)?.remove();
 }
 
 export default definePlugin({
@@ -389,6 +396,8 @@ export default definePlugin({
     async start() {
         applyLegacyPluginSettings();
 
+        applyRemovedLabelStyle();
+
         this.oldGetMessage = oldGetMessage = MessageStore.getMessage;
 
         MessageStore.getMessage = (channelId: string, messageId: string) => {
@@ -420,6 +429,7 @@ export default definePlugin({
     stop() {
         removeContextMenuBindings();
         MessageStore.getMessage = this.oldGetMessage;
+        removeRemovedLabelStyle();
     }
 });
 
