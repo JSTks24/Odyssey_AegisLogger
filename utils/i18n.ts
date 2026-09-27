@@ -124,6 +124,7 @@ const en: Record<string, string> = {
     "modal.context.deleted": "deleted {time}",
     "modal.context.edited": "edited {time}",
     "modal.attachmentRemoved": "Removed in edit",
+    "modal.attachmentDeletedBadge": "Deleted",
     "modal.attachmentUnavailable": "Original lost (not archived)",
     "modal.menu.ariaLabel": "Message Logger",
     "modal.menu.jump": "Jump To Message",
@@ -248,6 +249,31 @@ const en: Record<string, string> = {
     "has.sound": "Sound",
     "has.embed": "Embed",
     "has.link": "Link",
+
+    "settings.group.updater": "Updates",
+    "settings.group.updaterHint": "Keep the plugin up to date",
+    "settings.title.autoCheckForUpdates": "Auto Check for Updates",
+    "settings.autoCheckForUpdates": "Automatically check for updates on startup.",
+    "settings.title.checkForUpdate": "Check for Updates",
+    "settings.checkForUpdate": "Manually check for updates and view new commits.",
+
+    "updater.currentVersion": "Current version:",
+    "updater.upToDate": "Up to Date!",
+    "updater.oneUpdate": "There is 1 update",
+    "updater.updatesAvailable": "There are {count} updates",
+    "updater.checkButton": "Check for Updates",
+    "updater.updateButton": "Update Now",
+    "updater.noUpdates": "No updates!",
+    "updater.notificationBody": "There are new updates available. Click here to update now!",
+    "updater.failedTitle": "Update Failed",
+    "updater.pullFailed": "Failed to pull the update",
+    "updater.buildFailed": "Rebuild failed. Please re-run install.cmd (or run pnpm build in the Vencord directory) to finish the update manually",
+    "updater.notGitRepo": "The plugin folder is not a git clone (installed from a ZIP?), so it cannot update itself. Please download the latest version from the repository instead",
+    "updater.checkFailed": "Failed to check for updates",
+    "updater.successTitle": "Update Success!",
+    "updater.restartBody": "Successfully updated. Restart Discord now to apply the changes?",
+    "updater.restartNow": "Restart",
+    "updater.later": "Not now",
 };
 
 const zhCN: Record<string, string> = {
@@ -366,6 +392,7 @@ const zhCN: Record<string, string> = {
     "modal.context.deleted": "删除于 {time}",
     "modal.context.edited": "编辑于 {time}",
     "modal.attachmentRemoved": "编辑时移除",
+    "modal.attachmentDeletedBadge": "已删除",
     "modal.attachmentUnavailable": "原图已失效（未本地存档）",
     "modal.menu.ariaLabel": "消息记录器",
     "modal.menu.jump": "跳转到消息",
@@ -490,6 +517,31 @@ const zhCN: Record<string, string> = {
     "has.sound": "音频",
     "has.embed": "嵌入",
     "has.link": "链接",
+
+    "settings.group.updater": "更新",
+    "settings.group.updaterHint": "保持插件为最新版本",
+    "settings.title.autoCheckForUpdates": "启动时自动检查更新",
+    "settings.autoCheckForUpdates": "启动时自动检查插件更新。",
+    "settings.title.checkForUpdate": "检查更新",
+    "settings.checkForUpdate": "手动检查插件更新，查看新提交列表。",
+
+    "updater.currentVersion": "当前版本：",
+    "updater.upToDate": "已是最新版本！",
+    "updater.oneUpdate": "有 1 个新更新",
+    "updater.updatesAvailable": "有 {count} 个新更新",
+    "updater.checkButton": "检查更新",
+    "updater.updateButton": "立即更新",
+    "updater.noUpdates": "暂无更新！",
+    "updater.notificationBody": "有新版本可用，点击立即更新！",
+    "updater.failedTitle": "更新失败",
+    "updater.pullFailed": "拉取更新失败",
+    "updater.buildFailed": "重新编译失败，请手动重跑 install.cmd（或在 Vencord 目录执行 pnpm build）完成更新",
+    "updater.notGitRepo": "插件目录不是 git 克隆（ZIP 压缩包安装？），无法自动更新，请到仓库重新下载最新版",
+    "updater.checkFailed": "检查更新失败",
+    "updater.successTitle": "更新成功！",
+    "updater.restartBody": "更新完成，立即重启 Discord 以应用更改？",
+    "updater.restartNow": "立即重启",
+    "updater.later": "稍后",
 };
 
 const strings: Record<Locale, Record<string, string>> = {
@@ -517,7 +569,7 @@ export function t(key: string, params?: Record<string, string | number>): string
 }
 
 export function removedAttachmentLabelCss(): string {
-    return JSON.stringify(t("modal.attachmentRemoved"));
+    return JSON.stringify(t("modal.attachmentDeletedBadge"));
 }
 
 export function tabDisplayName(tab: "Deleted" | "Edited" | "Ghost Pinged"): string {

@@ -632,12 +632,14 @@ function RemovedAttachment({ attachment }: { attachment: LoggedAttachment; }) {
     }
 
     return (
-        <img
-            className={cl("removed-attachment")}
-            src={attachment.url}
-            alt={attachment.filename ?? ""}
-            onError={() => setFailed(true)}
-        />
+        <span className={cl("removed-attachment-wrap")}>
+            <img
+                className={cl("removed-attachment")}
+                src={attachment.url}
+                alt={attachment.filename ?? ""}
+                onError={() => setFailed(true)}
+            />
+        </span>
     );
 }
 

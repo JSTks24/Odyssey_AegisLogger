@@ -53,10 +53,10 @@ describe("i18n", () => {
 
     it("quotes the removed-attachment label for css content", () => {
         vi.stubGlobal("navigator", { language: "zh-CN" });
-        expect(removedAttachmentLabelCss()).toBe('"编辑时移除"');
+        expect(removedAttachmentLabelCss()).toBe('"已删除"');
 
         vi.stubGlobal("navigator", { language: "en-US" });
-        expect(removedAttachmentLabelCss()).toBe('"Removed in edit"');
+        expect(removedAttachmentLabelCss()).toBe('"Deleted"');
     });
 
     it("maps tab enum values to display names", () => {

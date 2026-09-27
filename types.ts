@@ -147,3 +147,15 @@ export type GitError = {
 };
 
 export type GitResult = GitValue | GitError;
+
+export interface Commit {
+    hash: string;
+    author: string;
+    message: string;
+}
+
+export interface GitInfo {
+    repo: string;
+    branch: string;
+    gitHash: string;
+}

@@ -31,6 +31,7 @@ import { LimitedMap } from "./utils/LimitedMap";
 import { doesMatch } from "./utils/parseQuery";
 import * as imageUtils from "./utils/saveImage";
 import * as ImageManager from "./utils/saveImage/ImageManager";
+import updater from "./utils/updater";
 export { settings };
 
 export const logger = new Logger("AegisLogger", "#f26c6c");
@@ -424,6 +425,8 @@ export default definePlugin({
         settings.store.logsDir = logsDir;
 
         setupContextMenuPatches();
+
+        void updater.checkForUpdatesAndNotify(settings.store.autoCheckForUpdates);
     },
 
     stop() {

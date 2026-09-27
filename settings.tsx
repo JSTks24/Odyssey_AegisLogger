@@ -20,6 +20,7 @@ import { IdListEditor } from "./components/settings/IdListEditor";
 import { labeled } from "./components/settings/LabeledSetting";
 import { NumberInput } from "./components/settings/NumberInput";
 import { SectionHeader } from "./components/settings/SectionHeader";
+import updaterModal from "./components/UpdaterModal";
 import { DEFAULT_IMAGE_CACHE_DIR } from "./utils/constants";
 import { t } from "./utils/i18n";
 import { clearLegacyLogs, countLegacyRemaining, isLegacyDbCleared, legacyDbExists, migrateLegacyImages, migrateLegacyLogs } from "./utils/migration";
@@ -472,6 +473,31 @@ export const settings = definePluginSettings({
         type: OptionType.COMPONENT,
         get description() { return t("migrate.clearDesc"); },
         component: labeled(() => <ClearLegacyButton />)
+    },
+
+    sectionUpdater: {
+        type: OptionType.COMPONENT,
+        component: () => <SectionHeader titleKey="settings.group.updater" hintKey="settings.group.updaterHint" />
+    },
+
+    autoCheckForUpdates: {
+        get displayName() { return t("settings.title.autoCheckForUpdates"); },
+        type: OptionType.BOOLEAN,
+        get description() { return t("settings.autoCheckForUpdates"); },
+        default: true,
+    },
+
+    checkForUpdate: {
+        get displayName() { return t("settings.title.checkForUpdate"); },
+        type: OptionType.COMPONENT,
+        get description() { return t("settings.checkForUpdate"); },
+        component: labeled(() => (
+            <ErrorBoundary>
+                <Button onClick={() => updaterModal.openUpdaterModal()}>
+                    {t("updater.checkButton")}
+                </Button>
+            </ErrorBoundary>
+        ))
     },
 
     sectionDanger: {

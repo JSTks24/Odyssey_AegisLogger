@@ -28,4 +28,5 @@ export const RelationshipStore: any = {
 export const GuildMemberStore: any = { getMember: () => null };
 export const SelectedChannelStore: any = { getChannelId: () => "" };
 export const MessageStore: any = { getMessage: () => null };
-export const Toasts: any = { genId: () => "id", Type: { SUCCESS: "SUCCESS", FAILURE: "FAILURE" }, show: vi.fn() };
+export const Toasts: any = { genId: () => "id", Type: { SUCCESS: "SUCCESS", FAILURE: "FAILURE", MESSAGE: "MESSAGE" }, show: vi.fn() };
+export const Alerts: any = { show: vi.fn() };

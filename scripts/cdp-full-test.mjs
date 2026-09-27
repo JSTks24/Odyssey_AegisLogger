@@ -387,7 +387,8 @@ try {
         if (ready) {
             const [x, y] = await evalJs(INPUT_CENTER);
             await click(x, y);
-            await sleep(350);
+            await evalJs("document.querySelector('.aegis-modal-filter-area').dispatchEvent(new FocusEvent('focusin', { bubbles: true })); 1");
+            await sleep(400);
             const [ux, uy] = await evalJs("(() => { const el = [...document.querySelectorAll('.aegis-modal-filter-item')].find(e => e.textContent.includes('来自特定用户')); if (!el) return [0, 0]; const r = el.getBoundingClientRect(); return [Math.round(r.x + r.width / 2), Math.round(r.y + r.height / 2)]; })()");
             await click(ux, uy);
             await sleep(400);
@@ -505,6 +506,7 @@ try {
             const detail = await evalJs(`(() => {
                 const block = document.querySelector('.aegis-modal-removed-attachments');
                 const images = [...block.querySelectorAll('.aegis-modal-removed-attachment')];
+                const wraps = [...block.querySelectorAll('.aegis-modal-removed-attachment-wrap')];
                 return {
                     label: block.querySelector('.aegis-modal-removed-label')?.textContent,
                     images: images.length,
@@ -512,16 +514,22 @@ try {
                     notes: block.querySelectorAll('.aegis-modal-removed-file-note').length,
                     loaded: images.filter(img => img.complete && img.naturalWidth > 0).length,
                     fromArchive: images.filter(img => img.src.startsWith('blob:')).length,
-                    broken: images.filter(img => img.complete && img.naturalWidth === 0).length
+                    broken: images.filter(img => img.complete && img.naturalWidth === 0).length,
+                    wraps: wraps.length,
+                    undimmed: images.every(img => { const s = getComputedStyle(img); return s.opacity === "1" && s.filter === "none"; }),
+                    badge: wraps.length ? getComputedStyle(wraps[0], "::after").content : null
                 };
             })()`);
-            record("T20 编辑删图区块渲染（灰度缩略图+标签，无破图）", detail.label === "编辑时移除"
+            record("T20 编辑删图区块渲染（原图不遮蔽+左上角已删除角标，无破图）", detail.label === "编辑时移除"
                 && (detail.images + detail.files) > 0
                 && detail.broken === 0
-                && detail.loaded === detail.images, detail);
+                && detail.loaded === detail.images
+                && detail.wraps === detail.images
+                && detail.undimmed
+                && (detail.badge === '"已删除"' || detail.badge === '"Deleted"'), detail);
             await screenshot("T20-removed-attachments");
         } else {
-            record("T20 编辑删图区块渲染（灰度缩略图+标签，无破图）", true, { note: "本机日志中未找到编辑删图记录，未做实断言" });
+            record("T20 编辑删图区块渲染（原图不遮蔽+左上角已删除角标，无破图）", true, { note: "本机日志中未找到编辑删图记录，未做实断言" });
         }
     }
 
@@ -543,6 +551,53 @@ try {
             record("T21 本地图片存档链路（抽样内至少一张图来自本地存档）", true, probe.skip ? { note: probe.skip } : { ...probe, note: "抽样内没有走过缓存的附件" });
         } else {
             record("T21 本地图片存档链路（抽样内至少一张图来自本地存档）", probe.archived > 0, probe);
+        }
+    }
+
+    {
+        await evalJs("window.Vencord.Components.openPluginModal(window.Vencord.Plugins.plugins.AegisLogger); 1");
+        await sleep(2500);
+        const probe = await evalJs(`(() => {
+            const titles = [...document.querySelectorAll('.aegis-settings-section-title')].map(e => e.textContent);
+            const buttons = [...document.querySelectorAll('button')].map(b => b.textContent.trim());
+            return {
+                updaterSection: titles.includes("更新") || titles.includes("Updates"),
+                checkButton: buttons.includes("检查更新") || buttons.includes("Check for Updates"),
+                titles
+            };
+        })()`);
+        record("T22 设置页含更新分区与检查更新按钮", probe.updaterSection && probe.checkButton, probe);
+        await screenshot("T22-updater-section");
+    }
+
+    {
+        const [x, y] = await evalJs(`(() => {
+            const btn = [...document.querySelectorAll('button')].find(b => ["检查更新", "Check for Updates"].includes(b.textContent.trim()));
+            if (!btn) return [0, 0];
+            btn.scrollIntoView({ block: "center" });
+            const r = btn.getBoundingClientRect();
+            return [Math.round(r.x + r.width / 2), Math.round(r.y + r.height / 2)];
+        })()`);
+        if (x === 0 && y === 0) {
+            record("T23 检查更新按钮打开更新弹窗", false, { note: "未找到检查更新按钮" });
+        } else {
+            await sleep(400);
+            await click(x, y);
+            await sleep(1500);
+            const r = await evalJs(`(() => ({
+                title: document.querySelector('.aegis-updater-title')?.textContent ?? null,
+                content: !!document.querySelector('.aegis-updater-content')
+            }))()`);
+            record("T23 检查更新按钮打开更新弹窗", (r.title ?? "").includes("AegisLogger") && r.content, r);
+            await screenshot("T23-updater-modal");
+            await evalJs(`(async () => {
+                const ModalUtils = window.Vencord.Webpack?.findByProps?.("closeAllModals", "openModal");
+                if (ModalUtils?.closeAllModals) { ModalUtils.closeAllModals(); return { via: "closeAllModals" }; }
+                const cancel = [...document.querySelectorAll('.aegis-updater-footer button')].find(b => ["取消", "Cancel"].includes(b.textContent.trim()));
+                cancel?.click();
+                await new Promise(r => setTimeout(r, 500));
+                return { via: "cancel-fallback" };
+            })()`);
         }
     }
 } catch (e) {

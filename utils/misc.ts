@@ -173,7 +173,10 @@ export function getNative(): PluginNative<typeof import("../native")> {
             writeNativeLogChunk: async () => { },
             startNativeLogImport: async () => "" as any,
             readNativeLogChunk: async () => null,
-            closeNativeLogImport: async () => { }
+            closeNativeLogImport: async () => { },
+            getRepoInfo: async () => ({ ok: true, value: { repo: "", branch: "", gitHash: "" } }),
+            getNewCommits: async () => ({ ok: true, value: [] }),
+            update: async () => ({ ok: true, value: "" })
         } satisfies PluginNative<typeof import("../native")>;
 
         return Native;

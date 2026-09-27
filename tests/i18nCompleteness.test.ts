@@ -24,6 +24,8 @@ const DYNAMIC_KEYS = [
     "settings.group.storageHint",
     "settings.group.data",
     "settings.group.dataHint",
+    "settings.group.updater",
+    "settings.group.updaterHint",
     "filter.user",
     "filter.server",
     "filter.channel",

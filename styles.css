@@ -131,18 +131,16 @@
     gap: 6px;
 }
 
+.aegis-modal-removed-attachment-wrap {
+    display: inline-block;
+    position: relative;
+}
+
 .aegis-modal-removed-attachment {
+    display: block;
     max-width: 160px;
     max-height: 120px;
     border-radius: 6px;
-    filter: grayscale(1);
-    opacity: 0.75;
-    transition: filter 120ms ease, opacity 120ms ease;
-}
-
-.aegis-modal-removed-attachment:hover {
-    filter: none;
-    opacity: 1;
 }
 
 .aegis-modal-removed-file {
@@ -166,19 +164,21 @@
     border-radius: 8px;
 }
 
-.messagelogger-deleted-attachment:not(.messagelogger-deleted *)::after {
-    content: var(--aegis-removed-label, "Removed in edit");
+.messagelogger-deleted-attachment:not(.messagelogger-deleted *)::after,
+.aegis-modal-removed-attachment-wrap::after {
+    content: var(--aegis-removed-label, "Deleted");
     position: absolute;
-    top: 6px;
-    left: 6px;
+    top: 4px;
+    left: 4px;
     z-index: 2;
-    padding: 2px 6px;
+    padding: 1px 5px;
     border-radius: 4px;
-    background: rgba(0, 0, 0, 0.65);
-    color: var(--text-feedback-critical, #f23f43);
-    font-size: 12px;
+    background: rgba(0, 0, 0, 0.4);
+    color: var(--white-500, #fff);
+    font-size: 10px;
     font-weight: 600;
     line-height: 1.2;
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
     pointer-events: none;
 }
 
@@ -806,4 +806,89 @@
     gap: 8px;
     align-items: center;
     max-width: 280px;
+}
+
+.aegis-updater-title {
+    display: flex;
+    align-items: baseline;
+    gap: 4px;
+    font-size: 16px;
+    font-weight: 700;
+    color: var(--text-default, #f2f3f5);
+}
+
+.aegis-updater-repo {
+    color: var(--text-muted, #b5bac1);
+    font-size: 14px;
+    font-weight: 500;
+}
+
+.aegis-updater-content {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+.aegis-updater-current {
+    color: var(--text-muted, #b5bac1);
+    font-size: 14px;
+}
+
+.aegis-updater-hash {
+    font-family: monospace;
+    font-size: 12px;
+}
+
+.aegis-updater-error {
+    margin: 8px 0;
+    padding: 8px 10px;
+}
+
+.aegis-updater-error-title {
+    margin: 0 0 4px;
+    font-size: 14px;
+}
+
+.aegis-updater-error-cmd {
+    margin: 4px 0;
+    font-size: 12px;
+}
+
+.aegis-updater-error-message {
+    display: block;
+    font-size: 12px;
+    white-space: pre-wrap;
+    word-break: break-all;
+}
+
+.aegis-updater-updates-title {
+    margin: 8px 0 4px;
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text-default, #f2f3f5);
+}
+
+.aegis-updater-commit {
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+    font-size: 13px;
+    padding: 2px 0;
+}
+
+.aegis-updater-commit-message {
+    min-width: 0;
+    overflow-wrap: anywhere;
+    color: var(--text-default, #f2f3f5);
+}
+
+.aegis-updater-commit-author {
+    color: var(--text-muted, #b5bac1);
+    white-space: nowrap;
+}
+
+.aegis-updater-footer {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
 }
