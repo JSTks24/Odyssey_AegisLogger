@@ -17,8 +17,23 @@ vi.mock("../utils", () => ({
     }
 }));
 
-vi.mock("../utils/saveImage", () => ({
-    getAttachmentBlobUrl: vi.fn(async () => null)
+vi.mock("../index", () => ({
+    logger: { log: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn(), debug: vi.fn() },
+    settings: {
+        store: {
+            saveImages: false,
+            messageLimit: 0,
+            cacheLimit: 1000,
+            attachmentSizeLimitInMegabytes: 8,
+            attachmentFileExtensions: ""
+        }
+    }
+}));
+
+vi.mock("../utils/saveImage/ImageManager", () => ({
+    getImage: vi.fn(async () => new Uint8Array([1, 2, 3])),
+    downloadAttachment: vi.fn(async () => undefined),
+    deleteImage: vi.fn(async () => { })
 }));
 
 vi.mock("../db", async importOriginal => {

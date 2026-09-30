@@ -14,8 +14,12 @@ import { describe, expect, it } from "vitest";
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const TSCONFIG = join(ROOT, "tsconfig.json");
 const SKIP_DIRS = new Set(["node_modules", ".git", "dist", "idb", "native-file-system-adapter", "streamparser-json"]);
-const UNRESOLVED_CODES = new Set([2304, 2552, 2305, 2724]);
-const NAME_PATTERNS = [/Cannot find name '([^']+)'/, /has no exported member '([^']+)'/];
+const UNRESOLVED_CODES = new Set([2304, 2552, 2305, 2724, 2339]);
+const NAME_PATTERNS = [
+    /Cannot find name '([^']+)'/,
+    /has no exported member '([^']+)'/,
+    /Property '([^']+)' does not exist on type/
+];
 
 function toPosix(path: string) {
     return path.split(sep).join("/");

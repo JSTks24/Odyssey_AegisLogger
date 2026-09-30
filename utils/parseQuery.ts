@@ -19,8 +19,8 @@
 import { ChannelStore, GuildStore } from "@webpack/common";
 
 import { LoggedMessageJSON } from "../types";
-import { getGuildIdByChannel } from "./index";
 import { memoize } from "./memoize";
+import { getGuildIdByChannel } from "./misc";
 
 
 const validIdSearchTypes = ["server", "guild", "channel", "in", "user", "from", "message", "has", "before", "after", "around", "near", "during"] as const;

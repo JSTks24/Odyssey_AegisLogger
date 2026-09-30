@@ -538,14 +538,18 @@ try {
             const P = window.Vencord?.Plugins?.plugins?.AegisLogger;
             if (!P?.idb) return { skip: "插件未就绪" };
             if (P.settings?.store?.saveImages !== true) return { skip: "图片存档未开启" };
-            const sample = [];
+            const records = [];
             for (const status of ["DELETED", "EDITED"]) {
-                const records = await P.idb.getDateStortedMessagesByStatusIDB(true, 200, status);
-                for (const record of records) sample.push(...(record.message.attachments ?? []));
+                records.push(...await P.idb.getDateStortedMessagesByStatusIDB(true, 200, status));
             }
+            const stored = records.filter(record => (record.message.attachments ?? []).some(a => a.path != null && a.fileExtension != null));
+            if (stored.length === 0) return { sampled: records.length, cached: 0, archived: 0 };
+            const { records: hydrated, scope } = await P.idb.hydrateRecords(stored.slice(0, 20));
+            const sample = hydrated.flatMap(record => record.message.attachments ?? []);
+            scope.release();
             const cached = sample.filter(a => a.fileExtension != null);
             const archived = cached.filter(a => typeof a.url === "string" && a.url.startsWith("blob:"));
-            return { sampled: sample.length, cached: cached.length, archived: archived.length };
+            return { sampled: records.length, cached: cached.length, archived: archived.length };
         })()`);
         if (probe.skip || probe.cached === 0) {
             record("T21 本地图片存档链路（抽样内至少一张图来自本地存档）", true, probe.skip ? { note: probe.skip } : { ...probe, note: "抽样内没有走过缓存的附件" });

@@ -9,7 +9,19 @@ import { FileHandle, open } from "node:fs/promises";
 
 import { dialog, IpcMainInvokeEvent } from "electron";
 
-const activeFiles = new Map<string, FileHandle>();
+interface ImportSession {
+    handle: FileHandle;
+    decoder: TextDecoder;
+}
+
+const activeFiles = new Map<string, ImportSession>();
+
+async function releaseFile(fileId: string, session: ImportSession) {
+    activeFiles.delete(fileId);
+    try {
+        await session.handle.close();
+    } catch { }
+}
 
 export async function startNativeLogImport(_event: IpcMainInvokeEvent, defaultPath?: string, dialogTitle?: string, filterName?: string) {
     const res = await dialog.showOpenDialog({
@@ -22,33 +34,44 @@ export async function startNativeLogImport(_event: IpcMainInvokeEvent, defaultPa
 
     if (!path) throw Error("No file selected");
 
-    const fileHandle = await open(path, "r");
+    const session: ImportSession = {
+        handle: await open(path, "r"),
+        decoder: new TextDecoder("utf-8"),
+    };
+
     const fileId = randomUUID();
-    activeFiles.set(fileId, fileHandle);
+    activeFiles.set(fileId, session);
 
     return fileId;
 }
 
 export async function readNativeLogChunk(_event: IpcMainInvokeEvent, fileId: string, size: number = 64 * 1024): Promise<string | null> {
-    const fileHandle = activeFiles.get(fileId);
-    if (!fileHandle) return null;
+    const session = activeFiles.get(fileId);
+    if (!session) return null;
 
     const buffer = Buffer.alloc(size);
-    const { bytesRead } = await fileHandle.read(buffer, 0, size);
+    let bytesRead: number;
+    try {
+        ({ bytesRead } = await session.handle.read(buffer, 0, size));
+    } catch (error) {
+        await releaseFile(fileId, session);
+        throw error;
+    }
 
     if (bytesRead === 0) {
-        await fileHandle.close();
-        activeFiles.delete(fileId);
+        const tail = session.decoder.decode();
+        if (tail !== "") return tail;
+
+        await releaseFile(fileId, session);
         return null;
     }
 
-    return buffer.toString("utf-8", 0, bytesRead);
+    return session.decoder.decode(buffer.subarray(0, bytesRead), { stream: true });
 }
 
 export async function closeNativeLogImport(_event: IpcMainInvokeEvent, fileId: string) {
-    const fileHandle = activeFiles.get(fileId);
-    if (fileHandle) {
-        await fileHandle.close();
-        activeFiles.delete(fileId);
+    const session = activeFiles.get(fileId);
+    if (session) {
+        await releaseFile(fileId, session);
     }
 }

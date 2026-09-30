@@ -25,7 +25,8 @@ import { t, tabDisplayName } from "../utils/i18n";
 import searchIndex from "../utils/searchIndex";
 import { importLogs } from "../utils/settingsUtils";
 import { ClearLogsButton } from "./ClearLogsButton";
-import hooks from "./hooks";
+import hooks, { type messageLoadPhase } from "./hooks";
+import LogsErrorState from "./LogsErrorState";
 import FilterBar from "./LogsFilterBar";
 
 export interface MessagePreviewProps {
@@ -145,16 +146,24 @@ function LogsModal({ modalProps, initalQuery }: Props) {
     const [numDisplayedMessages, setNumDisplayedMessages] = useState(settings.store.messagesToDisplayAtOnceInLogs);
     const contentRef = useRef<HTMLDivElement | null>(null);
 
-    const { messages, total, statusTotal, pending, reset } = hooks.useMessages(queryEh, currentTab, sortNewest, numDisplayedMessages);
+    const { messages, total, hasMore, pending, phase, error, reset, retry } = hooks.useMessages(queryEh, currentTab, sortNewest, numDisplayedMessages);
     const active = modalProps.transitionState === 1;
-    const addQueryToken = React.useCallback((token: string) => setQuery(q => (q + " " + token).trim()), []);
+    const initialPageSize = settings.store.messagesToDisplayAtOnceInLogs;
+    const handleQueryChange = React.useCallback((value: string) => {
+        setQuery(value);
+        setNumDisplayedMessages(initialPageSize);
+    }, [initialPageSize]);
+    const addQueryToken = React.useCallback((token: string) => {
+        setQuery(q => (q + " " + token).trim());
+        setNumDisplayedMessages(initialPageSize);
+    }, [initialPageSize]);
     const handleLoadMore = React.useCallback(
         () => setNumDisplayedMessages(e => e + settings.store.messagesToDisplayAtOnceInLogs),
         []
     );
 
     useEffect(() => {
-        searchIndex.build(() => idb.iterateRawMessagesIDB(2000)).catch(error => console.error("[AegisLogger] search index build failed", error));
+        searchIndex.ensureReady(() => idb.iterateRawMessagesIDB(2000)).catch(error => console.error("[AegisLogger] search index build failed", error));
     }, []);
 
     return (
@@ -162,7 +171,7 @@ function LogsModal({ modalProps, initalQuery }: Props) {
             <ModalHeader className={cl("header")}>
                 <FilterBar
                     query={queryEh}
-                    onChange={setQuery}
+                    onChange={handleQueryChange}
                     placeholder={t("modal.placeholder")}
                     active={active}
                 />
@@ -203,17 +212,40 @@ function LogsModal({ modalProps, initalQuery }: Props) {
                     <ModalContent
                         className={cl("content")}
                     >
-                        {messages != null && total === 0 && (
+                        {error != null && (
+                            <LogsErrorState retry={retry} />
+                        )}
+
+                        {error == null && total === 0 && (
                             <EmptyLogs
                                 hasQuery={queryEh.length !== 0}
                                 reset={reset}
                             />
                         )}
 
-                        {!pending && messages != null && (
+                        {error == null && total !== 0 && pending && phase === "initial" && messages.length === 0 && (
+                            <div className={cl("loading-state")}>
+                                <div className={cl("load-dots")}>
+                                    <span className={cl("load-dot")} />
+                                    <span className={cl("load-dot")} />
+                                    <span className={cl("load-dot")} />
+                                </div>
+                                <span>{t("modal.loading.initial")}</span>
+                            </div>
+                        )}
+
+                        {error == null && (phase === "searching" || phase === "indexing") && (
+                            <div className={cl("search-status")}>
+                                {t(phase === "indexing" ? "modal.loading.indexing" : "modal.loading.searching")}
+                            </div>
+                        )}
+
+                        {error == null && total !== 0 && (messages.length > 0 || !pending) && (
                             <LogsContentMemo
                                 visibleMessages={messages}
-                                canLoadMore={messages.length < statusTotal && messages.length >= settings.store.messagesToDisplayAtOnceInLogs}
+                                canLoadMore={hasMore && messages.length >= settings.store.messagesToDisplayAtOnceInLogs}
+                                pending={pending}
+                                phase={phase}
                                 tab={currentTab}
                                 sortNewest={sortNewest}
                                 reset={reset}
@@ -268,18 +300,20 @@ interface LogContentProps {
     tab: LogTabs;
     visibleMessages: DBMessageRecord[];
     canLoadMore: boolean;
+    pending: boolean;
+    phase: messageLoadPhase | null;
     reset: () => void;
     addQueryToken: (token: string) => void;
     handleLoadMore: () => void;
 }
 
-function LogsContent({ visibleMessages, canLoadMore, sortNewest, tab, reset, addQueryToken, handleLoadMore }: LogContentProps) {
+function LogsContent({ visibleMessages, canLoadMore, pending, phase, sortNewest, tab, reset, addQueryToken, handleLoadMore }: LogContentProps) {
     const sentinelRef = useRef<HTMLDivElement | null>(null);
     const fetchingRef = useRef(false);
 
     useEffect(() => {
-        fetchingRef.current = false;
-    }, [visibleMessages.length]);
+        if (!pending) fetchingRef.current = false;
+    }, [pending, visibleMessages.length]);
 
     useEffect(() => {
         const el = sentinelRef.current;
@@ -313,10 +347,11 @@ function LogsContent({ visibleMessages, canLoadMore, sortNewest, tab, reset, add
                 ))}
             <div ref={sentinelRef} className={cl("load-sentinel")}>
                 {canLoadMore && (
-                    <div className={cl("load-dots")}>
+                    <div className={cl("load-dots", { idle: phase !== "more" })}>
                         <span className={cl("load-dot")} />
                         <span className={cl("load-dot")} />
                         <span className={cl("load-dot")} />
+                        {phase === "more" && <span className={cl("load-more-text")}>{t("modal.loading.more")}</span>}
                     </div>
                 )}
             </div>

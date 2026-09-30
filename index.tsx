@@ -11,24 +11,22 @@ import "./styles.css";
 import ErrorBoundary from "@components/ErrorBoundary";
 import { Logger } from "@utils/Logger";
 import definePlugin from "@utils/types";
-import { findByPropsLazy } from "@webpack";
-import { FluxDispatcher, MessageStore, React, UserStore } from "@webpack/common";
+import { MessageStore, React } from "@webpack/common";
 
 import { OpenLogsButton } from "./components/LogsButton";
 import logsModal from "./components/LogsModal";
-import idb, { DBMessageStatus } from "./db";
+import idb from "./db";
 import * as LoggedMessageManager from "./LoggedMessageManager";
-import { addMessage } from "./LoggedMessageManager";
+import messageHandlers from "./messageHandlers";
 import { settings } from "./settings";
-import { FetchMessagesResponse, LoadMessagePayload, LoggedMessage, LoggedMessageJSON, MessageCreatePayload, MessageDeleteBulkPayload, MessageDeletePayload, MessageUpdatePayload } from "./types";
-import { cleanUpCachedMessage, cleanupUserObject, contentExcluded, getIdList, getNative, isGhostPinged, mapTimestamp, messageJsonToMessageClass, reAddDeletedMessages } from "./utils";
-import { mergeRemovedAttachments } from "./utils/attachmentDiff";
+import { LoadMessagePayload, LoggedMessageJSON } from "./types";
+import { getNative, mapTimestamp, reAddDeletedMessages } from "./utils";
+import chatBridge from "./utils/chatBridge";
 import { removeContextMenuBindings, setupContextMenuPatches } from "./utils/contextMenu";
 import { removedAttachmentLabelCss, t } from "./utils/i18n";
-import { shouldIgnore } from "./utils/index";
 import { applyLegacyPluginSettings } from "./utils/legacySettings";
-import { LimitedMap } from "./utils/LimitedMap";
 import { doesMatch } from "./utils/parseQuery";
+import pluginRuntime from "./utils/pluginRuntime";
 import * as imageUtils from "./utils/saveImage";
 import * as ImageManager from "./utils/saveImage/ImageManager";
 import updater from "./utils/updater";
@@ -36,213 +34,18 @@ export { settings };
 
 export const logger = new Logger("AegisLogger", "#f26c6c");
 
-export const cacheSentMessages = new LimitedMap<string, LoggedMessageJSON>();
+let originalGetMessage: typeof MessageStore.getMessage | null = null;
 
-const cacheThing = findByPropsLazy("commit", "getOrCreate");
-
-let oldGetMessage: typeof MessageStore.getMessage;
-
-const handledMessageIds = new Set();
-async function messageDeleteHandler(payload: MessageDeletePayload & { isBulk: boolean; }) {
-    if (payload.mlDeleted) return;
-
-    if (handledMessageIds.has(payload.id)) {
-        return;
-    }
-
-    try {
-        handledMessageIds.add(payload.id);
-
-        let message: LoggedMessage | LoggedMessageJSON | null =
-            oldGetMessage?.(payload.channelId, payload.id);
-        if (message == null) {
-            const cachedMessage = cacheSentMessages.get(`${payload.channelId},${payload.id}`);
-            if (!cachedMessage) return;
-
-            message = { ...cacheSentMessages.get(`${payload.channelId},${payload.id}`), deleted: true } as LoggedMessageJSON;
-        }
-
-        const ghostPinged = isGhostPinged(message as any);
-
-        if (
-            shouldIgnore({
-                channelId: message?.channel_id ?? payload.channelId,
-                guildId: payload.guildId ?? (message as any).guildId ?? (message as any).guild_id,
-                authorId: message?.author?.id,
-                bot: message?.bot || message?.author?.bot,
-                flags: message?.flags,
-                ghostPinged,
-                content: (message as LoggedMessageJSON).content
-            })
-        ) {
-            return FluxDispatcher.dispatch({
-                type: "MESSAGE_DELETE",
-                channelId: payload.channelId,
-                id: payload.id,
-                mlDeleted: true
-            });
-        }
-
-
-        if (message == null || message.channel_id == null || !message.deleted) return;
-        if (payload.isBulk)
-            return message;
-
-        await addMessage(message, ghostPinged ? DBMessageStatus.GHOST_PINGED : DBMessageStatus.DELETED);
-    }
-    finally {
-        handledMessageIds.delete(payload.id);
-    }
+function holdChatAttachment(instance: any) {
+    chatBridge.holdAttachment(instance);
 }
 
-async function messageDeleteBulkHandler({ channelId, guildId, ids }: MessageDeleteBulkPayload) {
-    const messages = [] as LoggedMessageJSON[];
-    for (const id of ids) {
-        const msg = await messageDeleteHandler({ type: "MESSAGE_DELETE", channelId, guildId, id, isBulk: true });
-        if (msg) messages.push(msg as LoggedMessageJSON);
-    }
-
-    await idb.addMessagesBulkIDB(messages);
+function releaseChatAttachment(instance: any) {
+    chatBridge.releaseAttachment(instance);
 }
 
-async function messageUpdateHandler(payload: MessageUpdatePayload) {
-    const cachedMessage = cacheSentMessages.get(`${payload.message.channel_id},${payload.message.id}`);
-    if (
-        shouldIgnore({
-            channelId: payload.message?.channel_id,
-            guildId: payload.guildId ?? (payload as any).guild_id,
-            authorId: payload.message?.author?.id,
-            bot: (payload.message?.author as any)?.bot,
-            flags: payload.message?.flags,
-            ghostPinged: isGhostPinged(payload.message as any),
-            content: payload.message?.content ?? undefined
-        })
-    ) {
-        const cache = cacheThing.getOrCreate(payload.message.channel_id);
-        const message = cache.get(payload.message.id);
-        if (message) {
-            message.editHistory = [];
-            cacheThing.commit(cache);
-        }
-        return;
-    }
-
-    const previousRecord = await idb.getMessageIDB(payload.message.id);
-    const previous = previousRecord?.message ?? cachedMessage ?? null;
-
-    let message = oldGetMessage?.(payload.message.channel_id, payload.message.id) as LoggedMessage | LoggedMessageJSON | null;
-
-    let hasEdits = false;
-    if (message == null) {
-        if (cachedMessage != null && payload.message.content != null && cachedMessage.content !== payload.message.content) {
-            message = {
-                ...cachedMessage,
-                content: payload.message.content,
-                editHistory: [
-                    ...(cachedMessage.editHistory ?? []),
-                    {
-                        content: cachedMessage.content,
-                        timestamp: (new Date()).toISOString()
-                    }
-                ]
-            };
-
-            cacheSentMessages.set(`${payload.message.channel_id},${payload.message.id}`, message);
-            hasEdits = true;
-        }
-    } else {
-        hasEdits = message.editHistory != null && message.editHistory.length > 0;
-    }
-
-    if (previous?.attachments != null) {
-        const base: LoggedMessageJSON = message == null
-            ? { ...previous }
-            : typeof (message as any).toJS === "function"
-                ? (message as any).toJS()
-                : { ...(message as any) };
-
-        const merged = mergeRemovedAttachments(previous.attachments, base, payload.message);
-
-        if (merged != null) {
-            base.attachments = merged.attachments;
-            base.editHistory = merged.editHistory;
-            message = base;
-            hasEdits = true;
-        }
-    }
-
-    if (message == null || message.channel_id == null || !hasEdits) return;
-
-    await addMessage(message, DBMessageStatus.EDITED);
-}
-
-function messageCreateHandler(payload: MessageCreatePayload) {
-    const whitelistedIds = getIdList("whitelistedIds");
-    if (whitelistedIds.length > 0 && payload.guildId != null) {
-        const ids = [payload.channelId, payload.message?.author?.id, payload.guildId];
-        if (!whitelistedIds.some(e => ids.includes(e))) return;
-    }
-
-    if (contentExcluded(payload.message?.content, payload.guildId, payload.message?.channel_id ?? payload.channelId, payload.message?.author?.id)) return;
-
-    cacheSentMessages.set(`${payload.message.channel_id},${payload.message.id}`, cleanUpCachedMessage(payload.message));
-}
-
-async function processMessageFetch(response: FetchMessagesResponse) {
-    try {
-        if (!response.ok || response.body.length === 0) {
-            logger.error("Failed to fetch messages", response);
-            return;
-        }
-
-        const firstMessage = response.body[response.body.length - 1];
-        const messages = await idb.getMessagesByChannelAndAfterTimestampIDB(firstMessage.channel_id, firstMessage.timestamp);
-
-        if (!messages.length) return;
-
-        const deletedMessages = messages.filter(m =>
-            m.status === DBMessageStatus.DELETED ||
-            m.status === DBMessageStatus.GHOST_PINGED
-        );
-
-        for (const recivedMessage of response.body) {
-            const record = messages.find(m => m.message_id === recivedMessage.id);
-
-            if (record == null) continue;
-
-            if (record.message.editHistory && record.message.editHistory.length > 0) {
-                recivedMessage.editHistory = record.message.editHistory;
-
-                if (record.message.attachments?.length) {
-                    recivedMessage.attachments = record.message.attachments;
-                }
-            }
-        }
-
-        const fetchUser = (id: string) => UserStore.getUser(id) || response.body.find(e => e.author.id === id);
-
-        for (let i = 0, len = messages.length; i < len; i++) {
-            const record = messages[i];
-            if (!record) continue;
-
-            const { message } = record;
-
-            for (let j = 0, len2 = message.mentions.length; j < len2; j++) {
-                const user = message.mentions[j];
-                const cachedUser = fetchUser((user as any).id || user);
-                if (cachedUser) (message.mentions[j] as any) = cleanupUserObject(cachedUser);
-            }
-
-            const author = fetchUser(message.author.id);
-            if (!author) continue;
-            (message.author as any) = cleanupUserObject(author);
-        }
-
-        response.body.extra = deletedMessages.map(m => m.message);
-
-    } catch (e) {
-        logger.error("Failed to fetch messages", e);
-    }
+function refreshChatAttachment(instance: any, previousProps: any) {
+    chatBridge.refreshAttachment(instance, previousProps);
 }
 
 const REMOVED_LABEL_STYLE_ID = "aegis-removed-label-style";
@@ -302,11 +105,30 @@ export default definePlugin({
 
         {
             find: ".handleImageLoad)",
+            replacement: [
+                {
+                    match: /(componentDidMount\(\){)(.{1,150}===(.+?)\.LOADING)/,
+                    replace:
+                        "$1$self.holdChatAttachment(this);" +
+                        "if(this.props?.src?.startsWith('blob:') && this.props?.item?.type === 'VIDEO')" +
+                        "return this.setState({readyState: $3.READY});$2"
+                },
+                {
+                    match: /componentWillUnmount\(\){/,
+                    replace: "$&$self.releaseChatAttachment(this);"
+                },
+                {
+                    match: /componentDidUpdate\((\i)\){/,
+                    replace: "$&$self.refreshChatAttachment(this,$1);"
+                }
+            ]
+        },
+
+        {
+            find: "toURLSafe(e,t){try{return new URL(e,t)}catch(e){return null}}",
             replacement: {
-                match: /(componentDidMount\(\){)(.{1,150}===(.+?)\.LOADING)/,
-                replace:
-                    "$1if(this.props?.src?.startsWith('blob:') && this.props?.item?.type === 'VIDEO')" +
-                    "return this.setState({readyState: $3.READY});$2"
+                match: /toURLSafe\(e,t\)\{try\{return new URL\(e,t\)\}catch\(e\)\{return null\}\}/,
+                replace: "toURLSafe(e,t){return $self.imageUtils.guardManagedBlobUrl(e)||function(){try{return new URL(e,t)}catch(e){return null}}()}"
             }
         },
 
@@ -350,11 +172,16 @@ export default definePlugin({
         ];
     },
 
-    processMessageFetch,
+    processMessageFetch: chatBridge.processMessageFetch,
+    holdChatAttachment,
+    releaseChatAttachment,
+    refreshChatAttachment,
+    chatBridge,
     openLogModal: logsModal.openLogModal,
     doesMatch,
     reAddDeletedMessages,
     LoggedMessageManager,
+    messageHandlers,
     ImageManager,
     imageUtils,
     idb,
@@ -372,8 +199,6 @@ export default definePlugin({
         }
     },
 
-    isDeletedMessage: (id: string) => cacheSentMessages.get(id)?.deleted ?? false,
-
     getDeleted(m1, m2) {
         const deleted = m2?.deleted;
         if (deleted == null && m1?.deleted != null) return m1.deleted;
@@ -388,35 +213,25 @@ export default definePlugin({
     },
 
     flux: {
-        "MESSAGE_DELETE": messageDeleteHandler as any,
-        "MESSAGE_DELETE_BULK": messageDeleteBulkHandler,
-        "MESSAGE_UPDATE": messageUpdateHandler,
-        "MESSAGE_CREATE": messageCreateHandler
+        "MESSAGE_DELETE": messageHandlers.messageDeleteHandler as any,
+        "MESSAGE_DELETE_BULK": messageHandlers.messageDeleteBulkHandler,
+        "MESSAGE_UPDATE": messageHandlers.messageUpdateHandler,
+        "MESSAGE_CREATE": messageHandlers.messageCreateHandler
     },
 
     async start() {
+        pluginRuntime.start();
+
         applyLegacyPluginSettings();
 
         applyRemovedLabelStyle();
 
-        this.oldGetMessage = oldGetMessage = MessageStore.getMessage;
+        messageHandlers.setCacheLimit(settings.store.cacheLimit);
 
-        MessageStore.getMessage = (channelId: string, messageId: string) => {
-            const cached = idb.cachedMessages.get(messageId);
-            if (!cached)
-                return this.oldGetMessage(channelId, messageId);
+        originalGetMessage = chatBridge.start();
+        messageHandlers.setGetMessage(originalGetMessage);
 
-            if (cached.deleted)
-                return messageJsonToMessageClass({ message: cached });
-
-            const latestMessage = this.oldGetMessage(channelId, messageId);
-            return messageJsonToMessageClass({
-                message: {
-                    ...cached,
-                    ...(latestMessage ?? {}),
-                }
-            });
-        };
+        imageUtils.registerBlobUrlReleaser(url => URL.revokeObjectURL(url));
 
         Native.init();
 
@@ -430,9 +245,14 @@ export default definePlugin({
     },
 
     stop() {
+        pluginRuntime.stop();
+
         removeContextMenuBindings();
-        MessageStore.getMessage = this.oldGetMessage;
+
+        chatBridge.stop();
+        originalGetMessage = null;
+
         removeRemovedLabelStyle();
+        imageUtils.clearAttachmentBlobCache();
     }
 });
-

@@ -220,7 +220,39 @@
 
 .aegis-modal-load-dots {
     display: flex;
+    align-items: center;
     gap: 5px;
+}
+
+.aegis-modal-load-dots.idle .aegis-modal-load-dot {
+    animation: none;
+    opacity: 0.3;
+}
+
+.aegis-modal-load-more-text {
+    margin-left: 8px;
+    font-size: 12px;
+    color: var(--text-muted, #b5bac1);
+}
+
+.aegis-modal-loading-state {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    padding: 48px 0;
+    color: var(--text-muted, #b5bac1);
+}
+
+.aegis-modal-search-status {
+    padding: 6px 12px;
+    font-size: 13px;
+    text-align: center;
+    color: var(--text-muted, #b5bac1);
+    background: var(--background-base-low, rgba(151, 151, 159, 0.08));
+    border-radius: 8px;
+    margin: 0 12px 8px;
 }
 
 .aegis-modal-load-dot {

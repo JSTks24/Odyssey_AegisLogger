@@ -16,6 +16,7 @@ import { getLocale, t } from "../utils/i18n";
 import { matchCandidates } from "../utils/idMatch";
 import { HAS_VALUES, parseQuery, QueryResult, removeQueryToken, tokenizeQuery, upsertQueryToken } from "../utils/parseQuery";
 import searchBox from "../utils/searchBox";
+import searchIndex from "../utils/searchIndex";
 import DateCalendar from "./DateCalendar";
 import { resolveId } from "./settings/resolveId";
 
@@ -224,7 +225,24 @@ export default function FilterBar({ query, onChange, placeholder, active }: Filt
     };
 
     useEffect(() => {
-        idb.getDistinctLogEntities().then(setLogged).catch(() => setLogged(null));
+        let cancelled = false;
+
+        searchIndex.ensureReady(() => idb.iterateRawMessagesIDB(2000))
+            .catch(() => null)
+            .then(() => {
+                if (cancelled) return null;
+                return idb.getDistinctLogEntities();
+            })
+            .then(entities => {
+                if (!cancelled) setLogged(entities ?? null);
+            })
+            .catch(() => {
+                if (!cancelled) setLogged(null);
+            });
+
+        return () => {
+            cancelled = true;
+        };
     }, []);
 
     useEffect(() => {

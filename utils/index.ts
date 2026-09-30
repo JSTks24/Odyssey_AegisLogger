@@ -22,11 +22,13 @@ import { ChannelStore, SelectedChannelStore, UserStore } from "@webpack/common";
 
 import { settings } from "../index";
 import { LoggedMessageJSON } from "../types";
+import { DISCORD_EPOCH } from "./constants";
 import { messageMatchesRules,parseExclusionRules } from "./exclusionRules";
 import { memoize } from "./memoize";
 import { findLastIndex, getGuildIdByChannel } from "./misc";
 
 export * from "./cleanUp";
+export * from "./constants";
 export * from "./misc";
 
 
@@ -39,7 +41,6 @@ export function contentExcluded(content: string | null | undefined, guildId?: st
 
 
 interface Id { id: string, time: number; message?: LoggedMessageJSON; }
-export const DISCORD_EPOCH = 14200704e5;
 export function reAddDeletedMessages(messages: LoggedMessageJSON[], deletedMessages: LoggedMessageJSON[], channelStart: boolean, channelEnd: boolean) {
     if (!messages.length || !deletedMessages?.length) return;
     const IDs: Id[] = [];

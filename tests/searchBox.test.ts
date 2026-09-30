@@ -6,7 +6,7 @@
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-vi.mock("../utils/index", () => ({
+vi.mock("../utils/misc", () => ({
     getGuildIdByChannel: () => null
 }));
 

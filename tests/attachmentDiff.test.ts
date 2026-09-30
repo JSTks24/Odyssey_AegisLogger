@@ -67,7 +67,7 @@ describe("mergeRemovedAttachments", () => {
         const previous = { id: "m1", content: "hi", attachments: [att("1")] } as any;
         const payload = { id: "m1", content: "hi", attachments: [], edited_timestamp: "2026-09-18T12:00:00.000Z" } as any;
 
-        const merged = mergeRemovedAttachments(previous.attachments, { ...previous }, payload);
+        const merged = mergeRemovedAttachments(previous, { ...previous }, payload);
 
         expect(merged).not.toBeNull();
         expect(merged!.attachments).toHaveLength(1);
@@ -75,29 +75,56 @@ describe("mergeRemovedAttachments", () => {
         expect(merged!.editHistory).toHaveLength(1);
         expect(merged!.editHistory[0].content).toBe("hi");
         expect(merged!.editHistory[0].timestamp).toBe("2026-09-18T12:00:00.000Z");
-        expect(merged!.editHistory[0].attachments).toBe(merged!.attachments);
+        expect(merged!.editHistory[0].attachments).toEqual(merged!.attachments);
     });
 
-    it("reuses the last edit history entry when one exists", () => {
+    it("reuses the last edit history entry when it already belongs to this edit", () => {
         const previous = {
             id: "m1",
             content: "hi",
             attachments: [att("1")],
-            editHistory: [{ content: "first", timestamp: "t1" }]
+            editHistory: [{ content: "first", timestamp: "2026-09-18T12:00:00.000Z" }]
         } as any;
 
-        const merged = mergeRemovedAttachments(previous.attachments, previous, { attachments: [], edited_timestamp: "t2" } as any);
+        const merged = mergeRemovedAttachments(previous, previous, { attachments: [], edited_timestamp: "2026-09-18T12:00:00.000Z" } as any);
 
         expect(merged!.editHistory).toHaveLength(1);
         expect(merged!.editHistory[0].content).toBe("first");
-        expect(merged!.editHistory[0].timestamp).toBe("t1");
-        expect(merged!.editHistory[0].attachments).toBe(merged!.attachments);
+        expect(merged!.editHistory[0].timestamp).toBe("2026-09-18T12:00:00.000Z");
+        expect(merged!.editHistory[0].attachments).toEqual(merged!.attachments);
+    });
+
+    it("appends a fresh entry for a later pure attachment edit", () => {
+        const previous = {
+            id: "m1",
+            content: "hi",
+            attachments: [att("1"), att("2")],
+            editHistory: [{ content: "hi", timestamp: "2026-09-18T12:00:00.000Z", attachments: [att("1")] }]
+        } as any;
+
+        const merged = mergeRemovedAttachments(previous, { ...previous }, { attachments: [att("1")], edited_timestamp: "2026-09-18T13:00:00.000Z" } as any);
+
+        expect(merged!.editHistory).toHaveLength(2);
+        expect(merged!.editHistory[0].timestamp).toBe("2026-09-18T12:00:00.000Z");
+        expect(merged!.editHistory[0].attachments!.map((a: any) => a.id)).toEqual(["1"]);
+        expect(merged!.editHistory[1].timestamp).toBe("2026-09-18T13:00:00.000Z");
+        expect(merged!.editHistory[1].attachments!.map((a: any) => a.id)).toEqual(["1", "2"]);
+    });
+
+    it("keeps the history snapshot independent from the live attachment list", () => {
+        const previous = { id: "m1", content: "hi", attachments: [att("1")] } as any;
+        const merged = mergeRemovedAttachments(previous, { ...previous }, { attachments: [], edited_timestamp: "2026-09-18T12:00:00.000Z" } as any);
+
+        merged!.attachments[0].path = "later-backfill";
+
+        expect(merged!.editHistory[0].attachments).not.toBe(merged!.attachments);
+        expect(merged!.editHistory[0].attachments![0].path).toBeUndefined();
     });
 
     it("returns null when nothing changed", () => {
         const previous = { id: "m1", attachments: [att("1")] } as any;
 
-        expect(mergeRemovedAttachments(previous.attachments, previous, { attachments: [att("1")] } as any)).toBeNull();
+        expect(mergeRemovedAttachments(previous, previous, { attachments: [att("1")] } as any)).toBeNull();
     });
 
     it("returns null without a previous snapshot or payload attachments", () => {
@@ -105,14 +132,14 @@ describe("mergeRemovedAttachments", () => {
 
         expect(mergeRemovedAttachments(null, base, { attachments: [] } as any)).toBeNull();
         expect(mergeRemovedAttachments(undefined, base, {} as any)).toBeNull();
-        expect(mergeRemovedAttachments([att("1")], base, {} as any)).toBeNull();
+        expect(mergeRemovedAttachments({ id: "m1", attachments: [att("1")] } as any, base, {} as any)).toBeNull();
     });
 
     it("does not mutate the base message", () => {
         const previous = { id: "m1", content: "hi", attachments: [att("1")] } as any;
         const base = { ...previous };
 
-        mergeRemovedAttachments(previous.attachments, base, { attachments: [] } as any);
+        mergeRemovedAttachments(previous, base, { attachments: [], edited_timestamp: "2026-09-18T12:00:00.000Z" } as any);
 
         expect(base.attachments).toHaveLength(1);
         expect(base.attachments[0].deleted).toBeUndefined();

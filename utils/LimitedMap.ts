@@ -16,20 +16,54 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 
-import { settings } from "../index";
-
 export class LimitedMap<K, V> {
     public map: Map<K, V> = new Map();
-    constructor() { }
+    constructor(public limit = 0, public onEvict?: (key: K, value: V) => void) { }
 
     set(key: K, value: V) {
-        if (settings.store.cacheLimit > 0 && this.map.size >= settings.store.cacheLimit) {
-            this.map.delete(this.map.keys().next().value!);
+        const { limit } = this;
+        if (limit > 0 && !this.map.has(key)) {
+            while (this.map.size >= limit) {
+                const oldest = this.map.keys().next();
+                if (oldest.done) break;
+                const evicted = this.map.get(oldest.value);
+                this.map.delete(oldest.value);
+                if (evicted !== undefined) this.onEvict?.(oldest.value, evicted);
+            }
         }
         this.map.set(key, value);
     }
 
     get(key: K) {
         return this.map.get(key);
+    }
+
+    has(key: K) {
+        return this.map.has(key);
+    }
+
+    delete(key: K) {
+        return this.map.delete(key);
+    }
+
+    trim() {
+        const { limit } = this;
+        if (limit <= 0) return;
+
+        while (this.map.size > limit) {
+            const oldest = this.map.keys().next();
+            if (oldest.done) break;
+            const evicted = this.map.get(oldest.value);
+            this.map.delete(oldest.value);
+            if (evicted !== undefined) this.onEvict?.(oldest.value, evicted);
+        }
+    }
+
+    clear() {
+        this.map.clear();
+    }
+
+    get size() {
+        return this.map.size;
     }
 }

@@ -8,7 +8,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import * as webpackCommon from "./mocks/webpackCommon";
 
-vi.mock("../utils/index", () => ({
+vi.mock("../utils/misc", () => ({
     getGuildIdByChannel: (channelId: string) => (channelId === "chan-1" ? "g1" : undefined)
 }));
 
@@ -24,7 +24,7 @@ function makeRecord(id: string, overrides: Record<string, any> = {}, status = "D
         message: {
             id,
             channel_id: "chan-1",
-            timestamp: new Date(Date.UTC(2026, 0, 1, 12, 0, 0) + Number(id) * 1000).toISOString(),
+            timestamp: new Date(Date.UTC(2026, 0, 1, 12, 0, 0) + (Number(id) === 1 ? -1000 : Number(id) * 1000)).toISOString(),
             author: { id: "u1", username: "Alice", globalName: "Ali" },
             content: "hello world",
             attachments: [],
@@ -142,14 +142,22 @@ describe("buildIndexEntry flags", () => {
     });
 });
 
-describe("index container", () => {
-    it("builds from a source and reports ready", async () => {
-        const source = async function* () {
-            yield FIXTURES.slice(0, 8);
-            yield FIXTURES.slice(8);
-        };
+const fixtureSource = () => (async function* () {
+    yield FIXTURES.slice(0, 8);
+    yield FIXTURES.slice(8);
+})();
 
-        await searchIndex.build(source as any);
+const buildFixtureIndex = () => {
+    searchIndex.clear();
+    return searchIndex.ensureReady(fixtureSource);
+};
+
+describe("index container", () => {
+    beforeEach(async () => {
+        await buildFixtureIndex();
+    });
+
+    it("builds from a source and reports ready", async () => {
 
         expect(searchIndex.isReady()).toBe(true);
 
@@ -158,19 +166,91 @@ describe("index container", () => {
         expect(count).toBe(FIXTURES.length);
     });
 
-    it("returns matches newest first or oldest first by id", () => {
+    it("shares one build between concurrent callers", async () => {
+        searchIndex.clear();
+
+        let batches = 0;
+        const source = () => (async function* () {
+            batches++;
+            yield FIXTURES;
+        })();
+
+        await Promise.all([searchIndex.ensureReady(source), searchIndex.ensureReady(source)]);
+
+        expect(batches).toBe(1);
+        expect(searchIndex.isReady()).toBe(true);
+    });
+
+    it("replays adds and removes in the order they happened during a build", async () => {
+        searchIndex.clear();
+
+        const build = searchIndex.ensureReady(fixtureSource);
+
+        searchIndex.addRecords([makeRecord("500", { content: "replayed" })]);
+        searchIndex.removeIds(["500"]);
+        searchIndex.removeIds(["1"]);
+        searchIndex.addRecords([makeRecord("1", { content: "hello world" })]);
+
+        await build;
+
+        const replayed = tokenizeQuery("replayed");
+        const kept = tokenizeQuery("user:u1");
+
+        expect(searchIndex.search(replayed.queries, replayed.rest, "DELETED", 10, true).page).toEqual([]);
+        expect(searchIndex.search(kept.queries, kept.rest, "DELETED", 100, true).page.map(entry => entry.id)).toContain("1");
+    });
+
+    it("drops an in-flight build once the index is cleared", async () => {
+        searchIndex.clear();
+
+        let release: () => void = () => { };
+        const gate = new Promise<void>(resolve => { release = resolve; });
+
+        const source = () => (async function* () {
+            await gate;
+            yield FIXTURES;
+        })();
+
+        const build = searchIndex.ensureReady(source);
+        searchIndex.clear();
+        release();
+        await build;
+
+        expect(searchIndex.isReady()).toBe(false);
+
+        let count = 0;
+        searchIndex.forEach(() => count++);
+        expect(count).toBe(0);
+    });
+
+    it("rebuilds from scratch after a clear", async () => {
+        await buildFixtureIndex();
+
+        expect(searchIndex.isReady()).toBe(true);
+
+        let count = 0;
+        searchIndex.forEach(() => count++);
+        expect(count).toBe(FIXTURES.length);
+    });
+
+    it("returns matches newest first or oldest first by timestamp", async () => {
         const { queries, rest } = tokenizeQuery("user:u1");
 
         const newest = searchIndex.search(queries, rest, "DELETED", 3, true);
         const oldest = searchIndex.search(queries, rest, "DELETED", 3, false);
 
-        expect(newest.page.map(entry => entry.id)).toEqual(["9", "8", "7"]);
-        expect(oldest.page.map(entry => entry.id)).toEqual(["1", "10", "11"]);
-        expect(newest.total).toBe(oldest.total);
-        expect(newest.total).toBeGreaterThan(3);
+        const expected = FIXTURES
+            .filter(record => record.status === "DELETED" && record.message.author.id === "u1")
+            .sort((a, b) => searchIndex.buildEntry(b).timestampMs - searchIndex.buildEntry(a).timestampMs)
+            .map(record => record.message_id);
+
+        expect(newest.page.map(entry => entry.id)).toEqual(expected.slice(0, 3));
+        expect(oldest.page.map(entry => entry.id)).toEqual(expected.slice(-3).reverse());
+        expect(newest.total).toBe(expected.length);
+        expect(oldest.total).toBe(expected.length);
     });
 
-    it("filters by status", () => {
+    it("filters by status", async () => {
         const attachments = tokenizeQuery("has:attachment");
         const text = tokenizeQuery("alice");
 
@@ -179,7 +259,7 @@ describe("index container", () => {
         expect(searchIndex.search(text.queries, text.rest, "EDITED", 10, true).page.map(entry => entry.id)).toEqual(["15"]);
     });
 
-    it("syncs adds and removes after the build", () => {
+    it("syncs adds and removes after the build", async () => {
         const { queries, rest } = tokenizeQuery("freshly");
 
         searchIndex.addRecords([makeRecord("99", { content: "freshly added" })]);
@@ -189,7 +269,7 @@ describe("index container", () => {
         expect(searchIndex.search(queries, rest, "DELETED", 10, true).page).toEqual([]);
     });
 
-    it("reports the exact total so pagination keeps working", () => {
+    it("reports the exact total so pagination keeps working", async () => {
         const { queries, rest } = tokenizeQuery("hello");
         const { page, total } = searchIndex.search(queries, rest, "DELETED", 2, true);
 

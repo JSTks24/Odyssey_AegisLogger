@@ -22,8 +22,7 @@ import { ChannelStore, moment, UserStore } from "@webpack/common";
 
 import { DBMessageStatus } from "../db";
 import { LoggedAttachment, LoggedMessageJSON } from "../types";
-import { DEFAULT_IMAGE_CACHE_DIR } from "./constants";
-import { DISCORD_EPOCH } from "./index";
+import { DEFAULT_IMAGE_CACHE_DIR,DISCORD_EPOCH } from "./constants";
 import { memoize } from "./memoize";
 
 const MessageClass: any = findLazy(m => m?.prototype?.isEdited);
@@ -134,7 +133,7 @@ export const messageJsonToMessageClass = memoize((log: { message: LoggedMessageJ
         message.messageSnapshots.map(m => mapTimestamp(m.message));
 
     return message;
-});
+}, 1000);
 
 
 export function parseJSON(json?: string | null) {
@@ -171,6 +170,7 @@ export function getNative(): PluginNative<typeof import("../native")> {
             startNativeLogExport: async () => "" as any,
             finishNativeLogExport: async () => { },
             writeNativeLogChunk: async () => { },
+            cancelNativeLogExport: async () => { },
             startNativeLogImport: async () => "" as any,
             readNativeLogChunk: async () => null,
             closeNativeLogImport: async () => { },

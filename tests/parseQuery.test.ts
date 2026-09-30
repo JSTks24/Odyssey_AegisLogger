@@ -8,7 +8,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import * as webpackCommon from "./mocks/webpackCommon";
 
-vi.mock("../utils/index", () => ({
+vi.mock("../utils/misc", () => ({
     getGuildIdByChannel: (channelId: string) => (channelId === "chan-with-guild" ? "guild-1" : null)
 }));
 

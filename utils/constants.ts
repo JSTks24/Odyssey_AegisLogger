@@ -16,8 +16,22 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 
+import type { LoggedMessageJSON } from "../types";
+
 export const DEFAULT_IMAGE_CACHE_DIR = "savedImages";
 
+export const DISCORD_EPOCH = 14200704e5;
+
+export function normalizeTimestampMs(message: Pick<LoggedMessageJSON, "timestamp" | "id">): number {
+    const parsed = Date.parse(message.timestamp as any);
+    if (!Number.isNaN(parsed)) return parsed;
+
+    const snowflake = parseInt(message.id);
+    if (Number.isFinite(snowflake) && snowflake > 0) return snowflake / 4194304 + DISCORD_EPOCH;
+
+    return 0;
+}
+
 export const DB_NAME = "AegisLoggerIDB";
-export const DB_VERSION = 1;
+export const DB_VERSION = 2;
 export const LOGS_DATA_FILENAME = "aegis-logger-logs.json";

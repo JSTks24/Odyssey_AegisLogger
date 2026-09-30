@@ -7,6 +7,7 @@
 import { MessageJSON } from "@vencord/discord-types";
 
 import { LoggedAttachment, LoggedEdit, LoggedMessageJSON } from "../types";
+import { mergeEditHistory } from "./recordMerge";
 
 export interface AttachmentDiff {
     changed: boolean;
@@ -22,6 +23,12 @@ export interface RemovedAttachmentMerge {
 
 const hasId = (a: LoggedAttachment | undefined | null): a is LoggedAttachment & { id: string } =>
     a != null && a.id != null && a.id !== "";
+
+const timeOf = (value: any): number => {
+    if (value instanceof Date) return value.getTime();
+    const parsed = Date.parse(value);
+    return Number.isNaN(parsed) ? 0 : parsed;
+};
 
 export function diffAttachments(
     oldAttachments: LoggedAttachment[] | undefined | null,
@@ -46,10 +53,11 @@ export function diffAttachments(
 }
 
 export function mergeRemovedAttachments(
-    previousAttachments: LoggedAttachment[] | undefined | null,
+    previousMessage: LoggedMessageJSON | null | undefined,
     base: LoggedMessageJSON,
     payloadMessage: MessageJSON
 ): RemovedAttachmentMerge | null {
+    const previousAttachments = previousMessage?.attachments;
     const payloadAttachments = payloadMessage.attachments as LoggedAttachment[] | undefined;
 
     if (payloadAttachments == null || previousAttachments == null) return null;
@@ -58,19 +66,24 @@ export function mergeRemovedAttachments(
 
     if (!diff.changed) return null;
 
-    const editHistory = base.editHistory ?? [];
-    const last = editHistory[editHistory.length - 1];
+    const attachments = diff.merged.map(attachment => ({ ...attachment }));
+    const snapshot = attachments.map(attachment => ({ ...attachment }));
+    const history = mergeEditHistory(previousMessage?.editHistory, base.editHistory);
+    const editTime = payloadMessage.edited_timestamp ?? (new Date()).toISOString();
+    const last = history[history.length - 1];
+
+    const lastBelongsToThisEvent = last != null && timeOf(last.timestamp) === timeOf(editTime);
 
     return {
-        attachments: diff.merged,
-        editHistory: last != null
-            ? [...editHistory.slice(0, -1), { ...last, attachments: diff.merged }]
+        attachments,
+        editHistory: lastBelongsToThisEvent
+            ? [...history.slice(0, -1), { ...last, attachments: snapshot }]
             : [
-                ...editHistory,
+                ...history,
                 {
                     content: base.content ?? "",
-                    timestamp: payloadMessage.edited_timestamp ?? (new Date()).toISOString(),
-                    attachments: diff.merged
+                    timestamp: editTime,
+                    attachments: snapshot
                 }
             ]
     };

@@ -21,6 +21,7 @@ import { labeled } from "./components/settings/LabeledSetting";
 import { NumberInput } from "./components/settings/NumberInput";
 import { SectionHeader } from "./components/settings/SectionHeader";
 import updaterModal from "./components/UpdaterModal";
+import messageHandlers from "./messageHandlers";
 import { DEFAULT_IMAGE_CACHE_DIR } from "./utils/constants";
 import { t } from "./utils/i18n";
 import { clearLegacyLogs, countLegacyRemaining, isLegacyDbCleared, legacyDbExists, migrateLegacyImages, migrateLegacyLogs } from "./utils/migration";
@@ -304,6 +305,9 @@ export const settings = definePluginSettings({
         type: OptionType.SELECT,
         get description() { return t("settings.cacheLimit"); },
         get options() { return numberOptions(SIZE_LADDER, 1000); },
+        onChange(newValue) {
+            messageHandlers.setCacheLimit(newValue as number);
+        }
     },
 
     alwaysLogDirectMessages: {

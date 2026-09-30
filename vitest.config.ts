@@ -16,9 +16,12 @@ export default defineConfig({
         include: ["tests/**/*.test.ts"]
     },
     resolve: {
-        alias: {
-            "@webpack/common": r("./tests/mocks/webpackCommon.ts"),
-            "@api/Settings": r("./tests/mocks/settings.ts")
-        }
+        alias: [
+            { find: "@webpack/common", replacement: r("./tests/mocks/webpackCommon.ts") },
+            { find: "@webpack", replacement: r("./tests/mocks/webpack.ts") },
+            { find: "@api/Settings", replacement: r("./tests/mocks/settings.ts") },
+            { find: /^@components\/Button$/, replacement: r("./tests/mocks/components/button.ts") },
+            { find: /^.*[\\/]Odyssey_AegisLogger[\\/]index\.tsx$/, replacement: r("./tests/mocks/pluginIndex.ts") }
+        ]
     }
 });

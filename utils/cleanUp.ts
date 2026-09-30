@@ -20,7 +20,7 @@ import { User } from "@vencord/discord-types";
 import { MessageStore } from "@webpack/common";
 
 import { LoggedMessageJSON, RefrencedMessage } from "../types";
-import { getGuildIdByChannel, isGhostPinged } from "./index";
+import { getGuildIdByChannel, isGhostPinged } from "./misc";
 
 export function cleanupMessage(message: any, removeDetails: boolean = true): LoggedMessageJSON {
     const ret: LoggedMessageJSON = typeof message.toJS === "function" ? JSON.parse(JSON.stringify(message.toJS())) : { ...message };

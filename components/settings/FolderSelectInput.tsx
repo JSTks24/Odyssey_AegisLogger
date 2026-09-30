@@ -26,6 +26,7 @@ import { Toasts } from "@webpack/common";
 import { Native, settings } from "../..";
 import { DEFAULT_IMAGE_CACHE_DIR } from "../../utils/constants";
 import { t } from "../../utils/i18n";
+import { clearAttachmentBlobCache } from "../../utils/saveImage";
 
 const cl = classNameFactory("folder-upload");
 const inputClasses = findCssClassesLazy("input", "inputWrapper", "editable") as Record<string, string>;
@@ -64,6 +65,8 @@ export function SelectFolderInput({ settingsKey, successMessage }: Props) {
         try {
             const res = await Native.chooseDir(settingsKey);
             settings.store[settingsKey] = res;
+
+            if (settingsKey === "imageCacheDir") clearAttachmentBlobCache();
 
             return Toasts.show({
                 id: Toasts.genId(),
