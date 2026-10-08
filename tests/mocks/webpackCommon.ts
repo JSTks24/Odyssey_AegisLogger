@@ -28,7 +28,47 @@ export const RelationshipStore: any = {
 export const GuildMemberStore: any = { getMember: () => null };
 export const SelectedChannelStore: any = { getChannelId: () => "" };
 export const MessageStore: any = { getMessage: () => null };
-export const Toasts: any = { genId: () => "id", Type: { SUCCESS: "SUCCESS", FAILURE: "FAILURE", MESSAGE: "MESSAGE" }, show: vi.fn() };
+
+export type ToastType = "message" | "success" | "failure" | "custom" | "clip" | "link" | "forward" | "bookmark" | "clock";
+export type NewToastVariant = "default" | "success" | "critical";
+
+export interface StubToastData {
+    message: string;
+    type?: ToastType;
+    options?: { duration?: number };
+}
+
+export interface StubNewToastData {
+    text: string;
+    variant: NewToastVariant;
+    duration?: number;
+}
+
+const VARIANT_OF_TYPE: Record<ToastType, NewToastVariant> = {
+    message: "default",
+    success: "success",
+    failure: "critical",
+    custom: "default",
+    clip: "default",
+    link: "default",
+    forward: "default",
+    bookmark: "default",
+    clock: "default"
+};
+
+export const Toasts: { show: ReturnType<typeof vi.fn>; pop: ReturnType<typeof vi.fn> } = {
+    show: vi.fn(),
+    pop: vi.fn()
+};
+
+export function createToast(data: StubToastData): StubNewToastData {
+    return { text: data.message, variant: VARIANT_OF_TYPE[data.type ?? "message"], duration: data.options?.duration };
+}
+
+export function showToast(message: string, type: ToastType = "message", options?: { duration?: number }) {
+    Toasts.show(createToast({ message, type, options }));
+}
+
 export const Alerts: any = { show: vi.fn() };
 export const FluxDispatcher: any = { dispatch: vi.fn() };
 

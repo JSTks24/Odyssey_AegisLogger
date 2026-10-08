@@ -8,6 +8,7 @@ export const Native = getNative();
 
 import "./styles.css";
 
+import { plugins } from "@api/PluginManager";
 import ErrorBoundary from "@components/ErrorBoundary";
 import { Logger } from "@utils/Logger";
 import definePlugin from "@utils/types";
@@ -25,6 +26,8 @@ import chatBridge from "./utils/chatBridge";
 import { removeContextMenuBindings, setupContextMenuPatches } from "./utils/contextMenu";
 import { removedAttachmentLabelCss, t } from "./utils/i18n";
 import { applyLegacyPluginSettings } from "./utils/legacySettings";
+import loggingScope from "./utils/loggingScope";
+import messageLoggerScope from "./utils/messageLoggerScope";
 import { doesMatch } from "./utils/parseQuery";
 import pluginRuntime from "./utils/pluginRuntime";
 import * as imageUtils from "./utils/saveImage";
@@ -200,12 +203,14 @@ export default definePlugin({
     },
 
     getDeleted(m1, m2) {
+        if (!loggingScope.allowsMessage(m2, m1)) return false;
         const deleted = m2?.deleted;
         if (deleted == null && m1?.deleted != null) return m1.deleted;
         return deleted;
     },
 
     getEdited(m1, m2) {
+        if (!loggingScope.allowsMessage(m2, m1)) return [];
         const editHistory = m2?.editHistory;
         if (editHistory == null && m1?.editHistory != null && m1.editHistory.length > 0)
             return m1.editHistory.map(mapTimestamp);
@@ -221,6 +226,7 @@ export default definePlugin({
 
     async start() {
         pluginRuntime.start();
+        messageLoggerScope.start(plugins.MessageLogger as any);
 
         applyLegacyPluginSettings();
 
@@ -246,6 +252,7 @@ export default definePlugin({
 
     stop() {
         pluginRuntime.stop();
+        messageLoggerScope.stop();
 
         removeContextMenuBindings();
 

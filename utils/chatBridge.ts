@@ -11,6 +11,7 @@ import idb, { type DBMessageRecord, DBMessageStatus } from "../db";
 import { FetchMessagesResponse } from "../types";
 import chatAttachments from "./chatAttachments";
 import { cleanupUserObject } from "./cleanUp";
+import loggingScope from "./loggingScope";
 import messageChanges from "./messageChanges";
 import { messageJsonToMessageClass } from "./misc";
 import pluginRuntime from "./pluginRuntime";
@@ -99,10 +100,15 @@ async function processMessageFetch(response: FetchMessagesResponse) {
 
         const usable: DBMessageRecord[] = [];
         const stale: string[] = [];
+        const responseContext = response.body.find(message => message.channel_id === firstMessage.channel_id && (message.guild_id || message.guildId));
 
         for (const record of hydrated.records) {
-            if (messageChanges.changedSince(record.message_id, epoch)) stale.push(record.message_id);
-            else usable.push(record);
+            const fallback = responseContext?.channel_id === record.channel_id ? responseContext : undefined;
+            if (messageChanges.changedSince(record.message_id, epoch) || !loggingScope.allowsMessage(record.message, fallback)) stale.push(record.message_id);
+            else usable.push({
+                ...record,
+                message: { ...record.message, guildId: loggingScope.guildId(loggingScope.context(record.message, fallback)) }
+            });
         }
 
         scope.releaseRecords(stale);
@@ -167,7 +173,7 @@ function start() {
     if (originalGetMessage == null) originalGetMessage = MessageStore.getMessage;
     MessageStore.getMessage = (channelId: string, messageId: string) => {
         const cached = chatMessages.get(messageId)?.message ?? idb.cachedMessages.get(messageId);
-        if (!cached)
+        if (!cached || !loggingScope.allowsMessage(cached))
             return originalGetMessage!(channelId, messageId);
 
         if (cached.deleted)

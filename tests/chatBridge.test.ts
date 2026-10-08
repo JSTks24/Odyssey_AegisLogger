@@ -32,9 +32,10 @@ vi.mock("../utils/misc", async importOriginal => ({
     messageJsonToMessageClass: (log: any) => log.message
 }));
 
-import { MessageStore } from "@webpack/common";
+import { ChannelStore, MessageStore } from "@webpack/common";
 
 import idb, { DBMessageStatus } from "../db";
+import { settings } from "../index";
 import chatBridge from "../utils/chatBridge";
 import messageChanges from "../utils/messageChanges";
 import pluginRuntime from "../utils/pluginRuntime";
@@ -142,6 +143,8 @@ function pauseChatRead() {
 const tick = () => new Promise(resolve => setTimeout(resolve, 0));
 
 beforeEach(async () => {
+    settings.store.whitelistedIds = "";
+    ChannelStore.getChannel = () => null;
     await idb.clearMessagesIDB();
 
     messageChanges.resetForTests();
@@ -562,5 +565,46 @@ describe("lease sweeping against the document", () => {
         await settleAttachmentCache();
 
         expect(revoked).toEqual([raw]);
+    });
+});
+
+
+describe("whitelist replay boundaries", () => {
+    it("keeps old outside records in storage without projecting them into chat", async () => {
+        await idb.addMessageIDB(makeMessage("970", { guildId: "outside", attachments: [makeAttachment("outside-image")] }), DBMessageStatus.GHOST_PINGED);
+        settings.store.whitelistedIds = "allowed-one,allowed-two";
+        pluginRuntime.start();
+        chatBridge.start();
+        const response = makeResponse(["970"]);
+        await chatBridge.processMessageFetch(response);
+        expect(response.body.extra).toBeUndefined();
+        expect(readMessage("970")).toBeNull();
+        expect(chatBridge.stats().messages).toBe(0);
+        expect((await idb.getMessageIDB("970"))?.message.guildId).toBe("outside");
+    });
+
+    it("recovers legacy allowed context from the same channel response without rewriting the record", async () => {
+        await idb.addMessageIDB(makeMessage("971"), DBMessageStatus.DELETED);
+        settings.store.whitelistedIds = "allowed-one,allowed-two";
+        pluginRuntime.start();
+        chatBridge.start();
+        const response = makeResponse(["971"]);
+        response.body[0].guild_id = "allowed-one";
+        await chatBridge.processMessageFetch(response);
+        expect(response.body.extra).toHaveLength(1);
+        expect(readMessage("971")?.content).toBe("content-971");
+        expect((await idb.getMessageIDB("971"))?.message.guildId).toBeUndefined();
+    });
+
+    it("stops serving an adopted record after the whitelist changes", async () => {
+        await idb.addMessageIDB(makeMessage("972", { guildId: "allowed-one" }), DBMessageStatus.DELETED);
+        settings.store.whitelistedIds = "allowed-one,allowed-two";
+        pluginRuntime.start();
+        chatBridge.start();
+        await chatBridge.processMessageFetch(makeResponse(["972"]));
+        expect(readMessage("972")?.content).toBe("content-972");
+        settings.store.whitelistedIds = "allowed-two";
+        expect(readMessage("972")).toBeNull();
+        expect(await idb.getMessageIDB("972")).toBeDefined();
     });
 });

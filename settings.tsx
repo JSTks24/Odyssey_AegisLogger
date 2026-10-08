@@ -8,7 +8,7 @@ import { definePluginSettings, Settings } from "@api/Settings";
 import { Button } from "@components/Button";
 import ErrorBoundary from "@components/ErrorBoundary";
 import { OptionType } from "@utils/types";
-import { Alerts, Toasts, useState } from "@webpack/common";
+import { Alerts, showToast, useState } from "@webpack/common";
 
 import { logger, Native } from ".";
 import { ClearLogsButton } from "./components/ClearLogsButton";
@@ -69,11 +69,10 @@ function ExportLogsButton() {
 
 function showClearResult() {
     return isLegacyDbCleared().then(cleared => {
-        Toasts.show({
-            id: Toasts.genId(),
-            message: cleared ? t("migrate.clearSuccess") : t("migrate.clearFailed"),
-            type: cleared ? Toasts.Type.SUCCESS : Toasts.Type.FAILURE
-        });
+        showToast(
+            cleared ? t("migrate.clearSuccess") : t("migrate.clearFailed"),
+            cleared ? "success" : "failure"
+        );
     });
 }
 
@@ -91,11 +90,7 @@ function confirmLegacyDeletion({ migrated, duplicates, invalid, images }: { migr
                 await showClearResult();
             } catch (err) {
                 logger.error("Failed to clear legacy database", err);
-                Toasts.show({
-                    id: Toasts.genId(),
-                    message: t("migrate.clearBlocked"),
-                    type: Toasts.Type.FAILURE
-                });
+                showToast(t("migrate.clearBlocked"), "failure");
             }
         }
     });
@@ -120,17 +115,9 @@ function MigrateLegacyButton() {
                         const remaining = await countLegacyRemaining();
 
                         if (migrated > 0) {
-                            Toasts.show({
-                                id: Toasts.genId(),
-                                message: t("migrate.success", { count: migrated }),
-                                type: Toasts.Type.SUCCESS
-                            });
+                            showToast(t("migrate.success", { count: migrated }), "success");
                         } else if (remaining === 0) {
-                            Toasts.show({
-                                id: Toasts.genId(),
-                                message: t("migrate.none"),
-                                type: Toasts.Type.SUCCESS
-                            });
+                            showToast(t("migrate.none"), "success");
                         }
 
                         if (remaining > 0) {
@@ -147,11 +134,7 @@ function MigrateLegacyButton() {
                         }
                     } catch (err) {
                         logger.error("Legacy migration failed", err);
-                        Toasts.show({
-                            id: Toasts.genId(),
-                            message: t("migrate.failed"),
-                            type: Toasts.Type.FAILURE
-                        });
+                        showToast(t("migrate.failed"), "failure");
                     } finally {
                         setLoading(false);
                     }
@@ -180,11 +163,7 @@ function ClearLegacyButton() {
                         await showClearResult();
                     } catch (err) {
                         logger.error("Failed to clear legacy database", err);
-                        Toasts.show({
-                            id: Toasts.genId(),
-                            message: t("migrate.clearBlocked"),
-                            type: Toasts.Type.FAILURE
-                        });
+                        showToast(t("migrate.clearBlocked"), "failure");
                     }
                 }
             })}

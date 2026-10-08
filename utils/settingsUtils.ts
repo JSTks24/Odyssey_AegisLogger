@@ -17,7 +17,7 @@
 */
 
 import { chooseFile as chooseFileWeb } from "@utils/web";
-import { Toasts } from "@webpack/common";
+import { showToast } from "@webpack/common";
 
 import { logger, Native, settings } from "..";
 import idb, { DBMessageRecord, DBMessageStatus } from "../db";
@@ -165,36 +165,27 @@ export async function importLogs(): Promise<ImportSummary | null> {
 
         const partial = await finalize().catch(() => null);
 
-        Toasts.show({
-            id: Toasts.genId(),
-            message: appendTrimNotice(
-                partial != null && partial.imported > 0
-                    ? t("import.failedPartial", { count: partial.imported })
-                    : t("import.failed"),
-                partial
-            ),
-            type: Toasts.Type.FAILURE
-        });
+        showToast(
+            appendTrimNotice(partial != null && partial.imported > 0
+                ? t("import.failedPartial", { count: partial.imported })
+                : t("import.failed"), partial),
+            "failure"
+        );
         return null;
     }
 
     const summary = await finalize();
 
     if (imported === 0 && duplicates === 0 && invalid === 0) {
-        Toasts.show({
-            id: Toasts.genId(),
-            message: appendTrimNotice(t("import.none"), summary),
-            type: Toasts.Type.FAILURE
-        });
+        showToast(appendTrimNotice(t("import.none"), summary), "failure");
         return summary;
     }
 
     if (imported === 0) {
-        Toasts.show({
-            id: Toasts.genId(),
-            message: appendTrimNotice(t("import.allDuplicates", { count: duplicates }), summary),
-            type: Toasts.Type.FAILURE
-        });
+        showToast(
+            appendTrimNotice(t("import.allDuplicates", { count: duplicates }), summary),
+            "failure"
+        );
         return summary;
     }
 
@@ -203,11 +194,7 @@ export async function importLogs(): Promise<ImportSummary | null> {
     if (invalid > 0) message += " " + t("import.invalid", { count: invalid });
     message = appendTrimNotice(message, summary);
 
-    Toasts.show({
-        id: Toasts.genId(),
-        message,
-        type: Toasts.Type.SUCCESS
-    });
+    showToast(message, "success");
 
     return summary;
 }
@@ -238,11 +225,7 @@ export async function exportLogs() {
             await Native.finishNativeLogExport(streamId);
             streamId = null;
 
-            Toasts.show({
-                id: Toasts.genId(),
-                message: t("export.success", { count }),
-                type: Toasts.Type.SUCCESS
-            });
+            showToast(t("export.success", { count }), "success");
         } catch (e) {
             if (streamId != null) {
                 await Native.cancelNativeLogExport(streamId).catch(() => { });
@@ -251,13 +234,12 @@ export async function exportLogs() {
 
             const preservedPath = parsePreservedExportPath(e);
 
-            Toasts.show({
-                id: Toasts.genId(),
-                message: preservedPath != null
+            showToast(
+                preservedPath != null
                     ? t("export.failedPreserved", { path: preservedPath })
                     : t("export.failed"),
-                type: Toasts.Type.FAILURE
-            });
+                "failure"
+            );
         }
         return;
     }
@@ -296,11 +278,7 @@ export async function exportLogs() {
                 await writer.write(encoder.encode(EXPORT_FOOTER));
                 await writer.close();
 
-                Toasts.show({
-                    id: Toasts.genId(),
-                    message: t("export.success", { count }),
-                    type: Toasts.Type.SUCCESS
-                });
+                showToast(t("export.success", { count }), "success");
             } catch (e) {
                 await writer.abort?.();
                 throw e;
@@ -308,11 +286,7 @@ export async function exportLogs() {
         } catch (e) {
             console.error(e);
 
-            Toasts.show({
-                id: Toasts.genId(),
-                message: t("export.failed"),
-                type: Toasts.Type.FAILURE
-            });
+            showToast(t("export.failed"), "failure");
         }
     }
 }

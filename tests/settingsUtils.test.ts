@@ -113,7 +113,7 @@ describe("importLogs", () => {
 
         expect(summary).toEqual({ imported: 3, duplicates: 0, invalid: 0, trimmed: 0, retained: 0 });
         expect(importedRecords().flat().map(record => record.message_id)).toEqual(["1", "2", "3"]);
-        expect(Toasts.show).toHaveBeenCalledWith(expect.objectContaining({ type: "SUCCESS" }));
+        expect(Toasts.show).toHaveBeenCalledWith(expect.objectContaining({ variant: "success" }));
     });
 
     it("writes batches of at most 50 records", async () => {
@@ -194,7 +194,7 @@ describe("importLogs", () => {
         const summary = await importLogs();
 
         expect(summary).toEqual({ imported: 1, duplicates: 2, invalid: 0, trimmed: 0, retained: 0 });
-        expect(Toasts.show).toHaveBeenCalledWith(expect.objectContaining({ type: "SUCCESS" }));
+        expect(Toasts.show).toHaveBeenCalledWith(expect.objectContaining({ variant: "success" }));
     });
 
     it("fails without a store write when every record is a duplicate", async () => {
@@ -204,8 +204,8 @@ describe("importLogs", () => {
         const summary = await importLogs();
 
         expect(summary).toEqual({ imported: 0, duplicates: 1, invalid: 0, trimmed: 0, retained: 0 });
-        expect(Toasts.show).toHaveBeenCalledWith(expect.objectContaining({ type: "FAILURE" }));
-        expect(Toasts.show).toHaveBeenCalledWith(expect.objectContaining({ type: "FAILURE" }));
+        expect(Toasts.show).toHaveBeenCalledWith(expect.objectContaining({ variant: "critical" }));
+        expect(Toasts.show).toHaveBeenCalledWith(expect.objectContaining({ variant: "critical" }));
     });
 
     it("salvages the pending tail when the stream turns out malformed", async () => {
@@ -217,7 +217,7 @@ describe("importLogs", () => {
 
         expect(summary).toBeNull();
         expect(importedRecords().map(batch => batch.length)).toEqual([50, 10]);
-        expect(Toasts.show).toHaveBeenCalledWith(expect.objectContaining({ type: "FAILURE" }));
+        expect(Toasts.show).toHaveBeenCalledWith(expect.objectContaining({ variant: "critical" }));
     });
 
     it("applies the same retention rule to salvaged partial data and reports what was saved", async () => {
@@ -233,8 +233,8 @@ describe("importLogs", () => {
         expect(idb.enforceMessageLimitIDB).toHaveBeenCalledWith(100);
 
         const toast = vi.mocked(Toasts.show).mock.calls.at(-1)![0];
-        expect(toast.type).toBe("FAILURE");
-        expect(toast.message).toBe("import.failedPartial import.trimmed");
+        expect(toast.variant).toBe("critical");
+        expect(toast.text).toBe("import.failedPartial import.trimmed");
     });
 
     it("falls back to the generic failure toast when nothing was saved", async () => {
@@ -243,7 +243,7 @@ describe("importLogs", () => {
         await importLogs();
 
         const toast = vi.mocked(Toasts.show).mock.calls.at(-1)![0];
-        expect(toast.message).toBe("import.failed");
+        expect(toast.text).toBe("import.failed");
     });
 
     it("reports the records trimmed away when the import failed before saving anything", async () => {
@@ -254,7 +254,7 @@ describe("importLogs", () => {
         await importLogs();
 
         const toast = vi.mocked(Toasts.show).mock.calls.at(-1)![0];
-        expect(toast.message).toBe("import.failed import.trimmed");
+        expect(toast.text).toBe("import.failed import.trimmed");
     });
 
     it("reports the records trimmed away when every record was a duplicate", async () => {
@@ -268,7 +268,7 @@ describe("importLogs", () => {
         expect(summary!.trimmed).toBe(3);
 
         const toast = vi.mocked(Toasts.show).mock.calls.at(-1)![0];
-        expect(toast.message).toBe("import.allDuplicates import.trimmed");
+        expect(toast.text).toBe("import.allDuplicates import.trimmed");
     });
 
     it("reports an empty import file", async () => {
@@ -278,7 +278,7 @@ describe("importLogs", () => {
 
         expect(summary).toEqual({ imported: 0, duplicates: 0, invalid: 0, trimmed: 0, retained: 0 });
         expect(idb.upsertMessageRecordsIDB).not.toHaveBeenCalled();
-        expect(Toasts.show).toHaveBeenCalledWith(expect.objectContaining({ type: "FAILURE" }));
+        expect(Toasts.show).toHaveBeenCalledWith(expect.objectContaining({ variant: "critical" }));
     });
 
     it("restores multi byte characters that are split across chunks", async () => {
@@ -312,9 +312,9 @@ describe("importLogs", () => {
         expect(summary).toEqual({ imported: 3, duplicates: 0, invalid: 0, trimmed: 1, retained: 2 });
 
         const toast = vi.mocked(Toasts.show).mock.calls.at(-1)![0];
-        expect(toast.type).toBe("SUCCESS");
-        expect(toast.message).toContain("import.success");
-        expect(toast.message).toContain("import.trimmed");
+        expect(toast.variant).toBe("success");
+        expect(toast.text).toContain("import.success");
+        expect(toast.text).toContain("import.trimmed");
     });
 
     it("keeps the full backup untouched when the limit is disabled", async () => {
@@ -328,7 +328,7 @@ describe("importLogs", () => {
         expect(summary!.trimmed).toBe(0);
 
         const toast = vi.mocked(Toasts.show).mock.calls.at(-1)![0];
-        expect(toast.message).not.toContain("import.trimmed");
+        expect(toast.text).not.toContain("import.trimmed");
     });
 });
 
@@ -370,7 +370,7 @@ describe("exportLogs", () => {
 
         expect(Native.cancelNativeLogExport).toHaveBeenCalledWith("stream");
         expect(Native.finishNativeLogExport).not.toHaveBeenCalled();
-        expect(Toasts.show).toHaveBeenCalledWith(expect.objectContaining({ type: "FAILURE" }));
+        expect(Toasts.show).toHaveBeenCalledWith(expect.objectContaining({ variant: "critical" }));
     });
 
     it("still produces a valid file for an empty database", async () => {
@@ -378,7 +378,7 @@ describe("exportLogs", () => {
 
         expect(parsed.messages).toEqual([]);
         expect(Native.finishNativeLogExport).toHaveBeenCalledWith("stream");
-        expect(Toasts.show).toHaveBeenCalledWith(expect.objectContaining({ type: "SUCCESS" }));
+        expect(Toasts.show).toHaveBeenCalledWith(expect.objectContaining({ variant: "success" }));
     });
 });
 describe("export failure recovery notice", () => {
@@ -422,16 +422,16 @@ describe("export failure recovery notice", () => {
     it("shows the recovery location when the finished export was preserved", async () => {
         const toast = await exportToNative(new Error(preservedMessage));
 
-        expect(toast.type).toBe("FAILURE");
-        expect(toast.message).toBe("export.failedPreserved");
+        expect(toast.variant).toBe("critical");
+        expect(toast.text).toBe("export.failedPreserved");
         expect(t).toHaveBeenCalledWith("export.failedPreserved", { path: preservedPath });
     });
 
     it("keeps the generic failure notice when nothing was preserved", async () => {
         const toast = await exportToNative(new Error("disk full"));
 
-        expect(toast.type).toBe("FAILURE");
-        expect(toast.message).toBe("export.failed");
+        expect(toast.variant).toBe("critical");
+        expect(toast.text).toBe("export.failed");
         expect(t).not.toHaveBeenCalledWith("export.failedPreserved", expect.anything());
     });
 
@@ -444,7 +444,7 @@ describe("export failure recovery notice", () => {
 
         const toast = vi.mocked(Toasts.show).mock.calls.at(-1)![0];
         expect(Native.cancelNativeLogExport).toHaveBeenCalledWith("stream");
-        expect(toast.message).toBe("export.failed");
+        expect(toast.text).toBe("export.failed");
         expect(t).not.toHaveBeenCalledWith("export.failedPreserved", expect.anything());
     });
 });

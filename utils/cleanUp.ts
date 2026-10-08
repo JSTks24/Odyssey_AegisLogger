@@ -30,7 +30,7 @@ export function cleanupMessage(message: any, removeDetails: boolean = true): Log
     }
 
     ret.ghostPinged = ret.mentioned ?? isGhostPinged(message);
-    ret.guildId = ret.guild_id ?? getGuildIdByChannel(ret.channel_id);
+    ret.guildId = ret.guild_id || ret.guildId || getGuildIdByChannel(ret.channel_id);
     ret.embeds = (ret.embeds ?? []).map(cleanupEmbed);
     ret.deleted = ret.deleted ?? false;
     ret.deletedTimestamp = ret.deleted ? (new Date()).toISOString() : undefined;

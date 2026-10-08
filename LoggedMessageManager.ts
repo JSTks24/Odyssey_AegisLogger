@@ -20,6 +20,7 @@ import { logger, settings } from ".";
 import idb, { DBMessageRecord, DBMessageStatus } from "./db";
 import { LoggedAttachment, LoggedMessage, LoggedMessageJSON } from "./types";
 import { cleanupMessage, contentExcluded } from "./utils";
+import loggingScope from "./utils/loggingScope";
 import { applyAttachmentMetadata, mergeEventIntoRecord } from "./utils/recordMerge";
 import { cacheMessageImages } from "./utils/saveImage";
 
@@ -103,9 +104,11 @@ export const finalizeMessageWrite = async (messageId: string) => {
 export const writeMessageRecord = async (message: LoggedMessage | LoggedMessageJSON, status: DBMessageStatus): Promise<boolean> => {
     const finalMessage = cleanupMessage(message);
 
+    if (!loggingScope.allowsMessage(finalMessage)) return false;
     if (status !== DBMessageStatus.GHOST_PINGED && contentExcluded(finalMessage.content, finalMessage.guildId, finalMessage.channel_id, finalMessage.author?.id)) return false;
 
     const existing = await idb.getMessageIDB(finalMessage.id);
+    if (!loggingScope.allowsMessage(finalMessage)) return false;
     const merged = mergeEventIntoRecord(existing, finalMessage, status);
 
     if (status === DBMessageStatus.EDITED) {
@@ -121,6 +124,7 @@ export const writeMessageRecord = async (message: LoggedMessage | LoggedMessageJ
 export const addMessage = async (message: LoggedMessage | LoggedMessageJSON, status: DBMessageStatus) => {
     const finalMessage = cleanupMessage(message);
 
+    if (!loggingScope.allowsMessage(finalMessage)) return;
     if (status !== DBMessageStatus.GHOST_PINGED && contentExcluded(finalMessage.content, finalMessage.guildId, finalMessage.channel_id, finalMessage.author?.id)) return;
 
     const wrote = await enqueueMessageTask(finalMessage.id, () => writeMessageRecord(message, status));

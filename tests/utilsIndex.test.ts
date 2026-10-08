@@ -274,11 +274,11 @@ describe("shouldIgnore", () => {
         expect(shouldIgnore({ channelId: "dm-chan", authorId: "a1" })).toBe(false);
     });
 
-    it("keeps the current channel when the whitelist is set and alwaysLogCurrentChannel is on", () => {
+    it("ignores the current channel outside a nonempty whitelist", () => {
         settings.store.whitelistedIds = "g1";
         settings.store.alwaysLogCurrentChannel = true;
         SelectedChannelStore.getChannelId = () => "current-chan";
-        expect(shouldIgnore({ channelId: "current-chan", authorId: "a1", guildId: "g2" })).toBe(false);
+        expect(shouldIgnore({ channelId: "current-chan", authorId: "a1", guildId: "g2" })).toBe(true);
     });
 });
 
@@ -327,5 +327,28 @@ describe("getListMenuState", () => {
         settings.store.whitelistedIds = "b";
         settings.store.blacklistedIds = "";
         expect(getListMenuState("blacklistedIds", ["a", "b"])).toBe("move");
+    });
+});
+
+
+describe("whitelist scope boundaries", () => {
+    it("rejects own edits in the current channel outside the server whitelist", () => {
+        settings.store.whitelistedIds = "allowed-one,allowed-two";
+        settings.store.alwaysLogCurrentChannel = true;
+        SelectedChannelStore.getChannelId = () => "outside-channel";
+        expect(shouldIgnore({ channelId: "outside-channel", authorId: "self", guildId: "outside-guild" })).toBe(true);
+    });
+
+    it("rejects ghost pings outside the server whitelist", () => {
+        settings.store.whitelistedIds = "allowed-one,allowed-two";
+        expect(shouldIgnore({ channelId: "outside-channel", authorId: "self", guildId: "outside-guild", ghostPinged: true })).toBe(true);
+    });
+
+    it("does not classify an unavailable guild channel as a direct message", () => {
+        settings.store.whitelistedIds = "allowed-one,allowed-two";
+        settings.store.alwaysLogCurrentChannel = true;
+        settings.store.alwaysLogDirectMessages = true;
+        SelectedChannelStore.getChannelId = () => "unavailable-channel";
+        expect(shouldIgnore({ channelId: "unavailable-channel", authorId: "self" })).toBe(true);
     });
 });

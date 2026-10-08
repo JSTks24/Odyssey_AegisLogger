@@ -924,3 +924,66 @@
     justify-content: flex-end;
     gap: 8px;
 }
+
+.aegis-modal-snapshot {
+    padding: 8px 12px 12px;
+    color: var(--text-normal, var(--text-default));
+    font-size: 15px;
+    line-height: 1.4;
+}
+
+.aegis-modal-snapshot-text,
+.aegis-modal-snapshot-embed {
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+}
+
+.aegis-modal-snapshot-embed,
+.aegis-modal-snapshot-edit {
+    margin-top: 8px;
+    padding: 8px 12px;
+    border-left: 3px solid var(--background-modifier-accent, #80848e);
+    border-radius: 4px;
+    background: var(--background-base-lowest, rgba(0, 0, 0, 0.05));
+}
+
+.aegis-modal-snapshot-attachments {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    margin-top: 8px;
+}
+
+.aegis-modal-snapshot-attachment {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    max-width: 100%;
+    font-size: 12px;
+    overflow-wrap: anywhere;
+}
+
+.aegis-modal-snapshot-attachment :is(img, video) {
+    max-width: min(360px, 100%);
+    max-height: 280px;
+    border-radius: 6px;
+    object-fit: contain;
+}
+
+.aegis-modal-snapshot-attachment audio {
+    max-width: 100%;
+}
+
+.aegis-modal-snapshot-history {
+    margin-top: 8px;
+}
+
+.aegis-modal-snapshot-history summary {
+    cursor: pointer;
+}
+
+.aegis-modal-snapshot-empty,
+.aegis-modal-snapshot-edit time {
+    color: var(--text-muted);
+    font-size: 12px;
+}

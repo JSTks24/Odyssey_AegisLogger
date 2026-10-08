@@ -29,8 +29,18 @@ const MessageClass: any = findLazy(m => m?.prototype?.isEdited);
 const AuthorClass = findLazy(m => m?.prototype?.getAvatarURL);
 const sanitizeEmbed = findByCodeLazy('"embed_"),');
 
-export function getGuildIdByChannel(channel_id: string) {
-    return ChannelStore.getChannel(channel_id)?.guild_id;
+export function getGuildIdByChannel(channel_id: string): string | undefined {
+    const visited = new Set<string>();
+    let current: string | undefined = channel_id;
+
+    while (current && !visited.has(current) && visited.size < 32) {
+        visited.add(current);
+        const channel = ChannelStore.getChannel(current);
+        if (channel == null) return;
+        const guildId = channel.guild_id || (channel as any).guildId || channel.getGuildId?.();
+        if (guildId) return guildId;
+        current = channel.parent_id ?? (channel as any).parentId;
+    }
 }
 
 export const isGhostPinged = (message?: LoggedMessageJSON) => {

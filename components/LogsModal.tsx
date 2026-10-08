@@ -13,31 +13,25 @@ import { Link } from "@components/Link";
 import { copyWithToast, openUserProfile } from "@utils/discord";
 import { ModalContent, ModalFooter, ModalHeader, ModalRoot, ModalSize, openModal } from "@utils/modal";
 import { LazyComponent } from "@utils/react";
-import type { Channel, RenderModalProps, User } from "@vencord/discord-types";
-import { filters, find, findByPropsLazy, waitFor } from "@webpack";
+import type { RenderModalProps } from "@vencord/discord-types";
+import { findByPropsLazy } from "@webpack";
 import { Alerts, ChannelStore, ContextMenuApi, FluxDispatcher, GuildMemberStore, GuildStore, Menu, NavigationRouter, React, TabBar, Tooltip, useEffect, useMemo, useRef, useState } from "@webpack/common";
 
 import idb, { DBMessageRecord } from "../db";
 import { settings } from "../index";
-import { LoggedAttachment, LoggedMessage, LoggedMessageJSON } from "../types";
-import { getGuildIdByChannel, isImageAttachment, messageJsonToMessageClass, splitRemovedAttachments } from "../utils";
+import { LoggedAttachment, LoggedMessageJSON } from "../types";
+import { getGuildIdByChannel, isImageAttachment } from "../utils";
 import { t, tabDisplayName } from "../utils/i18n";
+import logMessageModules from "../utils/logMessageModules";
 import searchIndex from "../utils/searchIndex";
 import { importLogs } from "../utils/settingsUtils";
 import { ClearLogsButton } from "./ClearLogsButton";
 import hooks, { type messageLoadPhase } from "./hooks";
 import LogsErrorState from "./LogsErrorState";
 import FilterBar from "./LogsFilterBar";
+import logMessageContent from "./LogsMessageContent";
 
-export interface MessagePreviewProps {
-    className: string;
-    author: User;
-    message: LoggedMessage;
-    channel: Channel,
-    compact: boolean;
-    isGroupStart: boolean;
-    hideSimpleEmbedContent: boolean;
-}
+export type { MessagePreviewProps } from "../utils/logMessageModules";
 
 const ModalUtils = findByPropsLazy("closeAllModals", "openModal");
 
@@ -45,85 +39,12 @@ function closeAllModals() {
     ModalUtils.closeAllModals();
 }
 
-const MESSAGE_PREVIEW_FILTER = (m: any) =>
-    m?.type?.toString().includes("previewLinkTarget:") && !m?.type?.toString().includes("HAS_THREAD");
-
-let privateChannelFilter: ((m: any) => boolean) | null = null;
-
-function getPrivateChannelFilter() {
-    privateChannelFilter ??= filters.byCode(".is_message_request_timestamp,");
-    return privateChannelFilter;
-}
-
-let messagePreviewComponent: React.ComponentType<MessagePreviewProps> | null = null;
-let privateChannelRecord: any = null;
-let lazyModulesSubscribed = false;
-const lazyModuleListeners = new Set<() => void>();
-
-function resolveLazyModules() {
-    if (messagePreviewComponent == null) {
-        const found = find(MESSAGE_PREVIEW_FILTER, { isIndirect: true });
-        if (found) messagePreviewComponent = found as React.ComponentType<MessagePreviewProps>;
-    }
-
-    if (privateChannelRecord == null) {
-        const found = find(getPrivateChannelFilter(), { isIndirect: true });
-        if (found) privateChannelRecord = found;
-    }
-}
-
-function pickFromModule(found: unknown, filter: (m: any) => boolean) {
-    if (found == null) return null;
-    if (filter(found)) return found;
-    if (typeof found !== "object") return null;
-
-    for (const key in found as Record<string, unknown>) {
-        const value = (found as Record<string, unknown>)[key];
-        if (value != null && filter(value)) return value;
-    }
-
-    return null;
-}
-
-function adoptLazyModules(found: unknown) {
-    if (messagePreviewComponent == null) {
-        const hit = pickFromModule(found, MESSAGE_PREVIEW_FILTER);
-        if (hit) messagePreviewComponent = hit as React.ComponentType<MessagePreviewProps>;
-    }
-
-    if (privateChannelRecord == null) {
-        const hit = pickFromModule(found, getPrivateChannelFilter());
-        if (hit) privateChannelRecord = hit;
-    }
-}
-
-function subscribeLazyModules() {
-    if (lazyModulesSubscribed) return;
-    lazyModulesSubscribed = true;
-
-    const notify = (found?: unknown) => {
-        adoptLazyModules(found);
-        resolveLazyModules();
-        lazyModuleListeners.forEach(listener => listener());
-    };
-
-    resolveLazyModules();
-    waitFor(MESSAGE_PREVIEW_FILTER, notify);
-    waitFor(getPrivateChannelFilter(), notify);
-}
-
 function useLazyModules() {
-    const [, setVersion] = useState(0);
+    const [modules, setModules] = useState(logMessageModules.getSnapshot);
 
-    useEffect(() => {
-        subscribeLazyModules();
+    useEffect(() => logMessageModules.subscribe(() => setModules(logMessageModules.getSnapshot())), []);
 
-        const listener = () => setVersion(v => v + 1);
-        lazyModuleListeners.add(listener);
-        return () => void lazyModuleListeners.delete(listener);
-    }, []);
-
-    return { messagePreview: messagePreviewComponent, privateChannelRecord };
+    return modules;
 }
 
 const cl = classNameFactory("aegis-modal-");
@@ -440,21 +361,20 @@ function formatLogDate(value: string | Date | undefined | null) {
 }
 
 function LMessage({ message: record, isGroupStart, reset, addQueryToken }: LMessageProps) {
-    const { messagePreview: MessagePreview, privateChannelRecord: PrivateChannelRecord } = useLazyModules();
-    const { message, removedAttachments } = useMemo(() => {
-        const { live, removed } = splitRemovedAttachments(record.attachments);
-        const source = removed.length > 0 ? { ...record, attachments: live } : record;
-        return { message: messageJsonToMessageClass({ message: source }), removedAttachments: removed };
-    }, [record]);
-
-    if (!message) return null;
+    const modules = useLazyModules();
+    const { message: converted, removedAttachments } = useMemo(
+        () => logMessageContent.prepareMessage(record),
+        [record, modules.version]
+    );
+    const message = converted ?? record;
+    const author = message.author ?? { id: "", username: t("modal.snapshot.unknownAuthor") };
 
     const guildId = record.guildId ?? getGuildIdByChannel(message.channel_id);
     const guild = guildId != null ? GuildStore.getGuild(guildId) : null;
     const channel = ChannelStore.getChannel(message.channel_id);
     const isDM = channel?.isDM?.() ?? guildId == null;
-    const member = guildId != null ? GuildMemberStore.getMember(guildId, message.author.id) : null;
-    const authorName = member?.nick ?? (message.author as any).globalName ?? message.author.username;
+    const member = guildId != null ? GuildMemberStore.getMember(guildId, author.id) : null;
+    const authorName = member?.nick ?? (author as any).globalName ?? author.username ?? t("modal.snapshot.unknownAuthor");
 
     const jumpTo = (path: string) => {
         closeAllModals();
@@ -467,7 +387,7 @@ function LMessage({ message: record, isGroupStart, reset, addQueryToken }: LMess
     };
     const openAuthorProfile = () => {
         closeAllModals();
-        openUserProfile(message.author.id);
+        openUserProfile(author.id);
     };
 
     const sentAt = formatLogDate(message.timestamp);
@@ -499,7 +419,7 @@ function LMessage({ message: record, isGroupStart, reset, addQueryToken }: LMess
                             label={t("modal.menu.profile")}
                             action={() => {
                                 closeAllModals();
-                                openUserProfile(message.author.id);
+                                openUserProfile(author.id);
                             }}
                         />
 
@@ -507,7 +427,7 @@ function LMessage({ message: record, isGroupStart, reset, addQueryToken }: LMess
                             key="only-this-user"
                             id="only-this-user"
                             label={t("modal.menu.onlyUser")}
-                            action={() => addQueryToken(`user:${message.author.id}`)}
+                            action={() => addQueryToken(`user:${author.id}`)}
                         />
                         {guildId != null && (
                             <Menu.MenuItem
@@ -521,7 +441,7 @@ function LMessage({ message: record, isGroupStart, reset, addQueryToken }: LMess
                             key="exclude-this-user"
                             id="exclude-this-user"
                             label={t("modal.menu.excludeUser")}
-                            action={() => addQueryToken(`!user:${message.author.id}`)}
+                            action={() => addQueryToken(`!user:${author.id}`)}
                         />
 
                         <Menu.MenuItem
@@ -535,7 +455,7 @@ function LMessage({ message: record, isGroupStart, reset, addQueryToken }: LMess
                             key="copy-user-id"
                             id="copy-user-id"
                             label={t("modal.menu.copyUserId")}
-                            action={() => copyWithToast(message.author.id, t("copy.copied"))}
+                            action={() => copyWithToast(author.id, t("copy.copied"))}
                         />
 
                         <Menu.MenuItem
@@ -620,18 +540,14 @@ function LMessage({ message: record, isGroupStart, reset, addQueryToken }: LMess
                 {deletedAt && <span> · {t("modal.context.deleted", { time: deletedAt })}</span>}
                 {editedAt && <span> · {t("modal.context.edited", { time: editedAt })}</span>}
             </div>
-            {MessagePreview != null && (
-                <MessagePreview
-                    className={`${cl("msg-preview")} ${message.deleted ? "messagelogger-deleted" : ""}`}
-                    author={message.author}
-                    message={message}
-                    channel={ChannelStore.getChannel(message.channel_id) || (PrivateChannelRecord ? new PrivateChannelRecord({ id: "" }) : { id: "" } as any)}
-                    compact={false}
-                    isGroupStart={isGroupStart}
-                    hideSimpleEmbedContent={false}
-                />
-            )}
-            {removedAttachments.length > 0 && (
+            <logMessageContent.MessageContent
+                record={record}
+                message={converted}
+                modules={modules}
+                channel={channel}
+                isGroupStart={isGroupStart}
+            />
+            {converted != null && modules.messagePreview != null && removedAttachments.length > 0 && (
                 <div className={cl("removed-attachments")}>
                     <div className={cl("removed-label")}>{t("modal.attachmentRemoved")}</div>
                     <div className={cl("removed-row")}>
@@ -700,7 +616,7 @@ function isGroupStart(
         ? [previousMessage, currentMessage]
         : [currentMessage, previousMessage];
 
-    if (newestMessage.author.id !== oldestMessage.author.id) return true;
+    if (newestMessage.author?.id !== oldestMessage.author?.id) return true;
 
     const timeDifferenceInMinutes = Math.abs(
         (new Date(newestMessage.timestamp).getTime() - new Date(oldestMessage.timestamp).getTime()) / (1000 * 60)

@@ -135,6 +135,14 @@ if errorlevel 1 (
 echo   %USERPLUGIN% -^> %SCRIPT_DIR%
 echo.
 
+echo [4b/7] 校准宿主别名配置（显式宿主参数，写回本仓库 tsconfig.json）
+node "%SCRIPT_DIR%\scripts\prepare-host.mjs" --vencord-dir "%VENCORD_DIR%"
+if errorlevel 1 (
+    set "FAILMSG=宿主别名校准失败（prepare-host.mjs）。请确认 Vencord 目录完整后重跑。"
+    goto :fail
+)
+echo.
+
 echo [5/7] 编译插件（首次较慢）
 pushd "%VENCORD_DIR%"
 call pnpm build

@@ -10,9 +10,10 @@ import { FluxDispatcher } from "@webpack/common";
 import idb, { DBMessageStatus } from "./db";
 import { addMessage, enqueueMessageTask, finalizeMessageWrite, writeMessageRecord } from "./LoggedMessageManager";
 import { LoggedMessage, LoggedMessageJSON, MessageCreatePayload, MessageDeleteBulkPayload, MessageDeletePayload, MessageUpdatePayload } from "./types";
-import { cleanUpCachedMessage, contentExcluded, getIdList, hasPingged, isGhostPinged, shouldIgnore } from "./utils";
+import { cleanUpCachedMessage, contentExcluded, hasPingged, isGhostPinged, shouldIgnore } from "./utils";
 import { mergeRemovedAttachments } from "./utils/attachmentDiff";
 import { LimitedMap } from "./utils/LimitedMap";
+import loggingScope from "./utils/loggingScope";
 
 export const cacheSentMessages = new LimitedMap<string, LoggedMessageJSON>(1000);
 
@@ -51,11 +52,13 @@ export async function messageDeleteHandler(payload: MessageDeletePayload) {
         }
 
         const ghostPinged = isGhostPinged(message as any);
+        const context = loggingScope.context(message);
+        context.guildId = payload.guildId || (payload as any).guild_id || context.guildId;
 
         if (
             shouldIgnore({
                 channelId: message?.channel_id ?? payload.channelId,
-                guildId: payload.guildId ?? (message as any).guildId ?? (message as any).guild_id,
+                guildId: loggingScope.guildId(context),
                 authorId: message?.author?.id,
                 bot: message?.bot || message?.author?.bot,
                 flags: message?.flags,
@@ -74,7 +77,9 @@ export async function messageDeleteHandler(payload: MessageDeletePayload) {
 
         if (message == null || message.channel_id == null || !message.deleted) return;
 
-        await addMessage(message, ghostPinged ? DBMessageStatus.GHOST_PINGED : DBMessageStatus.DELETED);
+        const snapshot = typeof (message as any).toJS === "function" ? (message as any).toJS() : { ...message };
+        snapshot.guildId = loggingScope.guildId(context);
+        await addMessage(snapshot, ghostPinged ? DBMessageStatus.GHOST_PINGED : DBMessageStatus.DELETED);
     }
     finally {
         handledMessageIds.delete(payload.id);
@@ -88,26 +93,6 @@ export async function messageDeleteBulkHandler({ channelId, guildId, ids }: Mess
 }
 
 export async function messageUpdateHandler(payload: MessageUpdatePayload) {
-    if (
-        shouldIgnore({
-            channelId: payload.message?.channel_id,
-            guildId: payload.guildId ?? (payload as any).guild_id,
-            authorId: payload.message?.author?.id,
-            bot: (payload.message?.author as any)?.bot,
-            flags: payload.message?.flags,
-            ghostPinged: isGhostPinged(payload.message as any),
-            content: payload.message?.content ?? undefined
-        })
-    ) {
-        const cache = cacheThing.getOrCreate(payload.message.channel_id);
-        const message = cache.get(payload.message.id);
-        if (message) {
-            message.editHistory = [];
-            cacheThing.commit(cache);
-        }
-        return;
-    }
-
     const { channel_id, id } = payload.message;
 
     const wrote = await enqueueMessageTask(id, async () => {
@@ -116,6 +101,32 @@ export async function messageUpdateHandler(payload: MessageUpdatePayload) {
         const previous = previousRecord?.message ?? cachedMessage ?? null;
 
         let message = oldGetMessage?.(channel_id, id) as LoggedMessage | LoggedMessageJSON | null;
+        const fallback = {
+            ...previous,
+            ...message,
+            author: message?.author ?? previous?.author,
+            guildId: (message as any)?.guild_id || (message as any)?.guildId || previous?.guild_id || previous?.guildId
+        };
+        const context = loggingScope.context(payload.message, fallback);
+        context.guildId = payload.guildId || (payload as any).guild_id || context.guildId;
+
+        if (shouldIgnore({
+            channelId: channel_id,
+            guildId: loggingScope.guildId(context),
+            authorId: context.authorId,
+            bot: (payload.message.author as any)?.bot ?? fallback.author?.bot,
+            flags: payload.message.flags ?? fallback.flags,
+            ghostPinged: isGhostPinged({ ...fallback, ...payload.message } as any),
+            content: payload.message.content ?? fallback.content
+        })) {
+            const cache = cacheThing.getOrCreate(channel_id);
+            const current = cache.get(id);
+            if (current) {
+                current.editHistory = [];
+                cacheThing.commit(cache);
+            }
+            return false;
+        }
 
         let hasEdits = false;
         if (message == null) {
@@ -158,25 +169,28 @@ export async function messageUpdateHandler(payload: MessageUpdatePayload) {
 
         if (message == null || message.channel_id == null || !hasEdits) return false;
 
-        return writeMessageRecord(message, DBMessageStatus.EDITED);
+        const snapshot = typeof (message as any).toJS === "function" ? (message as any).toJS() : { ...message };
+        snapshot.guildId = loggingScope.guildId(context);
+        snapshot.author ??= fallback.author;
+        return writeMessageRecord(snapshot, DBMessageStatus.EDITED);
     });
 
     if (wrote) await finalizeMessageWrite(id);
 }
 
 export function messageCreateHandler(payload: MessageCreatePayload) {
-    const whitelistedIds = getIdList("whitelistedIds");
-    if (whitelistedIds.length > 0 && payload.guildId != null) {
-        const ids = [payload.channelId, payload.message?.author?.id, payload.guildId];
-        if (!whitelistedIds.some(e => ids.includes(e))) return;
-    }
+    const context = loggingScope.context(payload.message);
+    context.channelId ??= payload.channelId;
+    context.guildId = payload.guildId || (payload as any).guild_id || context.guildId;
+    if (!loggingScope.allows(context)) return;
 
+    const guildId = loggingScope.guildId(context);
     if (
         !hasPingged(payload.message as any) &&
-        contentExcluded(payload.message?.content, payload.guildId, payload.message?.channel_id ?? payload.channelId, payload.message?.author?.id)
+        contentExcluded(payload.message?.content, guildId, context.channelId, context.authorId)
     ) return;
 
-    cacheSentMessages.set(`${payload.message.channel_id},${payload.message.id}`, cleanUpCachedMessage(payload.message));
+    cacheSentMessages.set(`${payload.message.channel_id},${payload.message.id}`, cleanUpCachedMessage({ ...payload.message, guildId }));
 }
 
 const messageHandlers = {

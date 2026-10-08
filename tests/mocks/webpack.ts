@@ -16,3 +16,5 @@ export const findStoreLazy = (_name: string): any => ({
 export const findByPropsLazy = (..._args: unknown[]): any => ({});
 export const waitFor = vi.fn();
 export const filters = { byProps: (..._args: unknown[]) => () => false, byCode: (..._args: unknown[]) => () => false };
+export const findCssClassesLazy = (...names: string[]): Record<string, string> =>
+    Object.fromEntries(names.map(name => [name, name]));

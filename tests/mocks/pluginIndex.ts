@@ -33,6 +33,7 @@ export const settings: any = {
 export const Native: any = {
     init: vi.fn(async () => { }),
     getSettings: vi.fn(async () => ({ imageCacheDir: DEFAULT_IMAGE_CACHE_DIR, logsDir: "" })),
+    chooseDir: vi.fn(async () => null),
     startNativeLogExport: vi.fn(async () => "stream"),
     writeNativeLogChunk: vi.fn(async () => { }),
     finishNativeLogExport: vi.fn(async () => { }),

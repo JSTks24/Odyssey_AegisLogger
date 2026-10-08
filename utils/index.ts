@@ -24,6 +24,7 @@ import { settings } from "../index";
 import { LoggedMessageJSON } from "../types";
 import { DISCORD_EPOCH } from "./constants";
 import { messageMatchesRules,parseExclusionRules } from "./exclusionRules";
+import loggingScope from "./loggingScope";
 import { memoize } from "./memoize";
 import { findLastIndex, getGuildIdByChannel } from "./misc";
 
@@ -100,8 +101,10 @@ export function shouldIgnore({ channelId, authorId, guildId, flags, bot, ghostPi
     const isEphemeral = ((flags ?? 0) & EPHEMERAL) === EPHEMERAL;
     if (isEphemeral) return true;
 
-    if (channelId && guildId == null)
+    if (channelId && !guildId)
         guildId = getGuildIdByChannel(channelId);
+
+    if (!loggingScope.allows({ channelId, authorId, guildId })) return true;
 
     if (!ghostPinged && contentExcluded(content, guildId, channelId, authorId))
         return true;
@@ -154,8 +157,6 @@ export function shouldIgnore({ channelId, authorId, guildId, flags, bot, ghostPi
     if (shouldLogCurrentChannel) return false;
 
     if (isWhitelisted) return false;
-
-    if (whitelistedIds.length > 0 && guildId != null) return true;
 
     if (isBlacklisted && (!isAuthorWhitelisted || !isChannelWhitelisted)) return true;
 

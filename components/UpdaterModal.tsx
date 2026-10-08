@@ -10,7 +10,7 @@ import { ErrorCard } from "@components/ErrorCard";
 import { Link } from "@components/Link";
 import { ModalContent, ModalFooter, ModalHeader, ModalRoot, ModalSize, openModal } from "@utils/modal";
 import type { RenderModalProps } from "@vencord/discord-types";
-import { Toasts, useEffect, useState } from "@webpack/common";
+import { showToast, useEffect, useState } from "@webpack/common";
 
 import { Commit, GitError, GitInfo } from "../types";
 import { t } from "../utils/i18n";
@@ -40,11 +40,7 @@ function UpdaterModal({ modalProps }: { modalProps: RenderModalProps; }) {
         try {
             const updateAvailable = await updater.checkForUpdates();
             if (!updateAvailable && updater.lastError == null) {
-                Toasts.show({
-                    id: Toasts.genId(),
-                    message: t("updater.noUpdates"),
-                    type: Toasts.Type.MESSAGE
-                });
+                showToast(t("updater.noUpdates"), "message");
             }
             setCommits([...updater.changes]);
             setOutdated(updater.isOutdated);
