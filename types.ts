@@ -158,4 +158,16 @@ export interface GitInfo {
     repo: string;
     branch: string;
     gitHash: string;
+    installedHash?: string;
+    pendingBuild?: boolean;
+    state?: UpdateState;
+}
+
+export type UpdateState = "current" | "behind" | "ahead" | "diverged" | "detached" | "missing_upstream" | "dirty";
+
+export interface UpdateStatus {
+    info: GitInfo;
+    changes: Commit[];
+    state: UpdateState;
+    pendingBuild: boolean;
 }

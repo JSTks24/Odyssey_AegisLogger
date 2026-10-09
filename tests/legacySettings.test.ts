@@ -31,7 +31,7 @@ const LEGACY_BLOCK: Record<string, unknown> = {
     ignoreBots: true,
     messageLimit: 0,
     cacheLimit: 50000,
-    whitelistedIds: "1380075940285124724,1134557553011998840",
+    whitelistedIds: "100001000000000001,100002000000000001",
     blacklistedIds: "",
     attachmentFileExtensions: "png,jpg",
     messagesToDisplayAtOnceInLogs: 100,
@@ -47,7 +47,7 @@ const EXPECTED_MAPPED: Record<string, unknown> = {
     ignoreBots: true,
     messageLimit: 0,
     cacheLimit: 50000,
-    whitelistedIds: "1380075940285124724,1134557553011998840",
+    whitelistedIds: "100001000000000001,100002000000000001",
     blacklistedIds: "",
     attachmentFileExtensions: "png,jpg",
     messagesToDisplayAtOnceInLogs: 100

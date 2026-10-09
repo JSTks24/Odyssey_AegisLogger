@@ -12,11 +12,17 @@
         "url": "https://github.com/JSTks24/Odyssey_AegisLogger/issues"
     },
     "type": "module",
+    "packageManager": "pnpm@11.9.0",
+    "engines": {
+        "node": "^22.20.0 || ^24.12.0 || >=25.0.0"
+    },
     "scripts": {
         "test": "vitest run",
         "test:watch": "vitest"
     },
     "devDependencies": {
+        "@types/node": "26.0.1",
+        "@types/react": "19.1.0",
         "fake-indexeddb": "^6.2.5",
         "typescript": "^5.9.3",
         "vite": "^8.3.0",

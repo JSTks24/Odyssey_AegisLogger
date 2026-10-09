@@ -293,6 +293,36 @@ describe("B01 media evidence pipeline", () => {
 
         expect(investigation.status).toBe("blocked");
         expect(investigation.evidence.source.missingIdentityFields).toContain("messageId");
+        expect(investigation.evidence.source).toMatchObject({ kind: "query-before-fragment-pattern", inputProvided: false });
+        expect(investigation.evidence.source).not.toHaveProperty("url");
+        expect(investigation.evidence.source).not.toHaveProperty("report");
+    });
+
+    it("uses only explicitly supplied historical Blob metadata", () => {
+        const directory = fs.mkdtempSync(path.join(os.tmpdir(), "aegis-b01-source-"));
+        outputDirs.push(directory);
+        const sourcePath = path.join(directory, "source.json");
+        fs.writeFileSync(sourcePath, JSON.stringify({ url: base + "?format=webp#", report: "local-evidence.json", scenarioId: "fixture", messageId: "100001000000000001" }));
+
+        const loaded = b01.readHistoricalBlobSource(sourcePath);
+        expect(loaded.ok).toBe(true);
+        const investigation = b01.evaluateBlobInvestigation([], loaded.source);
+        expect(investigation.evidence.source).toEqual({ inputProvided: true, report: "local-evidence.json", url: base + "?format=webp#", scenarioId: "fixture", messageId: "100001000000000001", missingIdentityFields: ["elementId", "requestId", "provenance"] });
+        expect(investigation.status).toBe("blocked");
+    });
+
+    it("reports bad historical source input before opening a client connection", async () => {
+        const directory = fs.mkdtempSync(path.join(os.tmpdir(), "aegis-b01-source-"));
+        outputDirs.push(directory);
+        const sourcePath = path.join(directory, "invalid.json");
+        fs.writeFileSync(sourcePath, JSON.stringify({ url: "https://example.invalid/image.png" }));
+        let connections = 0;
+        const report = await b01.run({ pageWs: "unused", outDir: directory, historicalSourcePath: sourcePath, adapters: { connect: async () => { connections++; return {}; } } });
+
+        expect(connections).toBe(0);
+        expect(report.exitCode).toBe(1);
+        expect(report.results).toContainEqual(expect.objectContaining({ status: "fail", detail: { reason: "historical_blob_source_invalid" } }));
+        expect(b01.readHistoricalBlobSource(path.join(directory, "missing.json"))).toEqual({ ok: false, error: "historical_blob_source_unavailable" });
     });
 
     it("does not resolve the remaining Blob cause using a console-only URL", async () => {

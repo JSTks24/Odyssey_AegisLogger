@@ -83,12 +83,12 @@ describe("matchCandidates", () => {
 
     it("matches id prefixes for numeric input of three or more digits", () => {
         const snowflakePool = [
-            { id: "1380075940285124724", name: "Alice", typeLabel: "user" },
-            { id: "1380075940285124799", name: "Bob", typeLabel: "user" },
-            { id: "1371111111111111111", name: "Carol", typeLabel: "user" }
+            { id: "100001000000000001", name: "Alice", typeLabel: "user" },
+            { id: "100001000000000099", name: "Bob", typeLabel: "user" },
+            { id: "100002000000000001", name: "Carol", typeLabel: "user" }
         ];
 
-        expect(matchCandidates("138007", snowflakePool).map(entry => entry.id)).toEqual(["1380075940285124724", "1380075940285124799"]);
+        expect(matchCandidates("100001", snowflakePool).map(entry => entry.id)).toEqual(["100001000000000001", "100001000000000099"]);
         expect(matchCandidates("100", pool).map(entry => entry.id)).toEqual(["100"]);
     });
 
@@ -121,7 +121,7 @@ describe("matchCandidates", () => {
 
 describe("resolveInput", () => {
     it("passes numeric ids through untouched", () => {
-        expect(resolveInput("1380075940285124724", pool)).toBe("1380075940285124724");
+        expect(resolveInput("100001000000000001", pool)).toBe("100001000000000001");
     });
 
     it("resolves a name to the best matching entity id", () => {

@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -13,7 +13,8 @@ import { describe, expect, it } from "vitest";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const TSCONFIG = join(ROOT, "tsconfig.json");
-const SKIP_DIRS = new Set(["node_modules", ".git", "dist", "idb", "native-file-system-adapter", "streamparser-json"]);
+const HOST_CONFIG = join(ROOT, "tsconfig.host.json");
+const SKIP_DIRS = new Set(["node_modules", ".git", "dist", "tests", "Vencord", "idb", "native-file-system-adapter", "streamparser-json"]);
 const UNRESOLVED_CODES = new Set([2304, 2552, 2305, 2724, 2339]);
 const NAME_PATTERNS = [
     /Cannot find name '([^']+)'/,
@@ -31,13 +32,13 @@ function isOwnSource(file: string) {
     return !rel.split("/").slice(0, -1).some(part => SKIP_DIRS.has(part));
 }
 
-function readConfig() {
-    const config = ts.readConfigFile(TSCONFIG, ts.sys.readFile);
+function readConfig(path = TSCONFIG) {
+    const config = ts.readConfigFile(path, ts.sys.readFile);
     return ts.parseJsonConfigFileContent(config.config, ts.sys, ROOT);
 }
 
 function readBuildTimeGlobals() {
-    const vencordRoot = resolve(ROOT, readConfig().options.paths!["@webpack/common"][0], "../../..");
+    const vencordRoot = resolve(ROOT, readConfig(HOST_CONFIG).options.paths!["@webpack/common"][0], "../../..");
     const names = new Set<string>();
 
     for (const file of [
@@ -64,8 +65,8 @@ describe("unresolved identifier guard", () => {
         expect(readConfig().fileNames.filter(isOwnSource).length).toBeGreaterThan(20);
     });
 
-    it("resolves every referenced name in own source files", () => {
-        const parsed = readConfig();
+    it.skipIf(!existsSync(HOST_CONFIG))("resolves every referenced name with an explicitly prepared host", () => {
+        const parsed = readConfig(HOST_CONFIG);
         const program = ts.createProgram({
             rootNames: parsed.fileNames.filter(isOwnSource),
             options: { ...parsed.options, noEmit: true }

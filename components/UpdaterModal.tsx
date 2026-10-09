@@ -39,7 +39,7 @@ function UpdaterModal({ modalProps }: { modalProps: RenderModalProps; }) {
         setBusy(true);
         try {
             const updateAvailable = await updater.checkForUpdates();
-            if (!updateAvailable && updater.lastError == null) {
+            if (!updateAvailable && updater.lastError == null && updater.state === "current") {
                 showToast(t("updater.noUpdates"), "message");
             }
             setCommits([...updater.changes]);
@@ -59,6 +59,10 @@ function UpdaterModal({ modalProps }: { modalProps: RenderModalProps; }) {
         setBusy(true);
         try {
             await updater.update();
+            setCommits([...updater.changes]);
+            setOutdated(updater.isOutdated);
+            setInfo(updater.repoInfo);
+            setError(updater.lastError);
         } finally {
             setBusy(false);
         }
@@ -75,7 +79,7 @@ function UpdaterModal({ modalProps }: { modalProps: RenderModalProps; }) {
             <ModalContent className={cl("content")}>
                 {info && (
                     <div className={cl("current")}>
-                        {t("updater.currentVersion")} <HashLink repo={info.repo} hash={info.gitHash} />
+                        {t("updater.currentVersion")} <HashLink repo={info.repo} hash={info.installedHash || info.gitHash} />
                     </div>
                 )}
                 {error != null && (
@@ -92,7 +96,13 @@ function UpdaterModal({ modalProps }: { modalProps: RenderModalProps; }) {
                     </ErrorCard>
                 )}
                 <h3 className={cl("updates-title")}>
-                    {commits.length === 0
+                    {error != null
+                        ? t("updater.checkFailed")
+                        : updater.pendingBuild
+                            ? t("updater.pendingBuild")
+                            : updater.state && updater.state !== "current" && updater.state !== "behind"
+                                ? t(`updater.state.${updater.state}`)
+                                : commits.length === 0
                         ? t("updater.upToDate")
                         : commits.length === 1
                             ? t("updater.oneUpdate")

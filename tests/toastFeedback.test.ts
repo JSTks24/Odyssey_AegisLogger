@@ -40,6 +40,8 @@ vi.mock("../db", () => ({
 const updaterMock = vi.hoisted(() => ({
     changes: [] as unknown[],
     isOutdated: false,
+    state: "current",
+    pendingBuild: false,
     repoInfo: { repo: "https://example.com/owner/repo", gitHash: "abcdef1234" } as Record<string, any> | null,
     lastError: null as unknown,
     checkForUpdates: vi.fn(async () => false),

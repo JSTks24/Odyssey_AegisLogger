@@ -13,7 +13,7 @@ import { dialog, IpcMainInvokeEvent, net, shell } from "electron";
 import { getSettings, saveSettings } from "./settings";
 export { cancelNativeLogExport, finishNativeLogExport, startNativeLogExport, writeNativeLogChunk } from "./export";
 export * from "./import";
-export * from "./updater";
+export { getNewCommits, getRepoInfo, getUpdateStatus, update } from "./updater";
 
 import { LoggedAttachment } from "../types";
 import { LOGS_DATA_FILENAME } from "../utils/constants";

@@ -5,117 +5,114 @@
  */
 
 import { execFile } from "node:child_process";
-import { access, readdir } from "node:fs/promises";
+import { readFile, realpath } from "node:fs/promises";
 import path from "node:path";
 
 import type { IpcMainInvokeEvent } from "electron";
 
-import { Commit, GitInfo, GitResult } from "../types";
+import { Commit, GitResult, UpdateStatus } from "../types";
 
 declare const __dirname: string;
 
-const PLUGIN_FOLDER_NAME = "odyssey-aegis-logger";
-const GIT_MAX_BUFFER = 64 * 1024 * 1024;
+let updatePromise: Promise<GitResult> | undefined;
 
-let pluginDirPromise: Promise<string | null> | undefined;
+const failure = (cmd: string, message: string): GitResult => ({ ok: false, cmd, message, error: null });
 
-const dirIsPlugin = async (dir: string) => {
-    try {
-        const files = await readdir(dir);
-        return files.includes("settings.tsx") && files.includes("install.cmd");
-    } catch {
-        return false;
-    }
-};
-
-async function findPluginDir() {
-    const userpluginsDir = path.join(__dirname, "..", "src", "userplugins");
-
-    const fixed = path.join(userpluginsDir, PLUGIN_FOLDER_NAME);
-    if (await dirIsPlugin(fixed)) return fixed;
-
-    try {
-        for (const entry of await readdir(userpluginsDir)) {
-            const dir = path.join(userpluginsDir, entry);
-            if (await dirIsPlugin(dir)) return dir;
-        }
-    } catch { }
-
-    return null;
+function validStatus(value: any): boolean {
+    return value != null && typeof value.info?.repo === "string" && typeof value.info.branch === "string"
+        && typeof value.info.gitHash === "string" && typeof value.pendingBuild === "boolean"
+        && ["current", "behind", "ahead", "diverged", "detached", "missing_upstream", "dirty"].includes(value.state)
+        && Array.isArray(value.changes) && value.changes.every((commit: any) => typeof commit?.hash === "string"
+            && typeof commit.author === "string" && typeof commit.message === "string");
 }
 
-const getPluginDir = () => pluginDirPromise ??= findPluginDir();
-
-const isGitRepo = async (dir: string) => {
+async function runInstaller(mode: "check" | "update"): Promise<GitResult> {
+    const cmd = `AegisLogger ${mode}`;
     try {
-        await access(path.join(dir, ".git"));
-        return true;
-    } catch {
-        return false;
-    }
-};
-
-async function git(args: string[]): Promise<GitResult> {
-    const cmd = `git ${args.join(" ")}`;
-    const cwd = await getPluginDir();
-    if (cwd == null)
-        return { ok: false, cmd, message: "plugin directory not found", error: null };
-
-    if (!await isGitRepo(cwd))
-        return { ok: false, cmd, message: "not a git repository", error: null };
-
-    return new Promise(resolve => {
-        execFile("git", args, { cwd, maxBuffer: GIT_MAX_BUFFER, windowsHide: true }, (error, stdout, stderr) => {
-            if (error)
-                resolve({ ok: false, cmd, message: String(stderr || error.message), error });
-            else
-                resolve({ ok: true, value: String(stdout).trim() });
+        const hostRoot = await realpath(path.join(__dirname, ".."));
+        const record = JSON.parse(await readFile(path.join(hostRoot, ".aegislogger-install.json"), "utf8"));
+        if (record.schemaVersion !== 1 || typeof record.sourceRoot !== "string" || typeof record.hostRoot !== "string"
+            || !path.isAbsolute(record.sourceRoot) || !path.isAbsolute(record.hostRoot)
+            || await realpath(record.hostRoot) !== hostRoot) {
+            return failure(cmd, "installation_record_invalid");
+        }
+        const sourceRoot = await realpath(record.sourceRoot);
+        const script = path.join(sourceRoot, "scripts", "install.mjs");
+        if (await realpath(script) !== script) return failure(cmd, "installation_script_invalid");
+        return await new Promise(resolve => {
+            let timer: ReturnType<typeof setTimeout> | undefined;
+            let finished = false;
+            let timedOut = false;
+            const finish = (result: GitResult) => {
+                if (finished) return;
+                finished = true;
+                if (timer) clearTimeout(timer);
+                resolve(result);
+            };
+            const child = execFile("node", [script, `--${mode}`, "--vencord-dir", hostRoot, "--json"], {
+                cwd: sourceRoot,
+                maxBuffer: 2 * 1024 * 1024,
+                windowsHide: true
+            }, (error, stdout) => {
+                if (timedOut) {
+                    finish(failure(cmd, "operation_timed_out; recovery_unconfirmed"));
+                    return;
+                }
+                try {
+                    const result = JSON.parse(String(stdout).trim());
+                    if (result.ok === true && validStatus(result.value) && !error
+                        && (mode === "check" || result.value.built === true)) finish(result);
+                    else finish(failure(cmd, String(result.message || result.error || "installer_response_invalid")
+                        + (result.restored === false ? "; recovery_incomplete" : "")
+                        + (typeof result.backupRoot === "string" ? `; backup: ${result.backupRoot}` : "")));
+                } catch {
+                    finish(failure(cmd, error?.killed ? "operation_timed_out; recovery_unconfirmed" : "installer_response_invalid"));
+                }
+            });
+            if (!finished) timer = setTimeout(() => {
+                timedOut = true;
+                if (process.platform === "win32" && child?.pid) {
+                    execFile("taskkill", ["/PID", String(child.pid), "/T", "/F"], { windowsHide: true, timeout: 10000 }, () => {
+                        finish(failure(cmd, "operation_timed_out; recovery_unconfirmed"));
+                    });
+                } else {
+                    child?.kill();
+                    finish(failure(cmd, "operation_timed_out; recovery_unconfirmed"));
+                }
+            }, mode === "check" ? 600000 : 1800000);
         });
-    });
+    } catch {
+        return failure(cmd, "installation_record_missing_or_unavailable; run install.cmd from the Git clone");
+    }
 }
 
 export function parseGitLog(output: string): Commit[] {
-    return output
-        .split("\n")
-        .map(line => line.trim())
-        .filter(line => line.includes(";"))
-        .map(line => {
-            const [hash, author, ...message] = line.split(";");
-            return { hash, author, message: message.join(";") };
-        });
+    return output.split("\n").map(line => line.trim()).filter(line => line.includes(";")).map(line => {
+        const [hash, author, ...message] = line.split(";");
+        return { hash, author, message: message.join(";") };
+    });
 }
 
-export async function getRepoInfo(_event: IpcMainInvokeEvent): Promise<GitResult> {
-    const repo = await git(["remote", "get-url", "origin"]);
-    if (!repo.ok) return repo;
-
-    const branch = await git(["branch", "--show-current"]);
-    if (!branch.ok) return branch;
-
-    const gitHash = await git(["rev-parse", "HEAD"]);
-    if (!gitHash.ok) return gitHash;
-
-    const value: GitInfo = {
-        repo: repo.value.replace(/\.git$/, ""),
-        branch: branch.value,
-        gitHash: gitHash.value
-    };
-    return { ok: true, value };
+export async function getUpdateStatus(_event: IpcMainInvokeEvent): Promise<GitResult> {
+    return runInstaller("check");
 }
 
-export async function getNewCommits(_event: IpcMainInvokeEvent): Promise<GitResult> {
-    const branch = await git(["branch", "--show-current"]);
-    if (!branch.ok) return branch;
+export async function getRepoInfo(event: IpcMainInvokeEvent): Promise<GitResult> {
+    const result = await getUpdateStatus(event);
+    return result.ok ? { ok: true, value: (result.value as UpdateStatus).info } : result;
+}
 
-    const fetch = await git(["fetch"]);
-    if (!fetch.ok) return fetch;
-
-    const log = await git(["log", "--format=%H;%an;%s", `HEAD..origin/${branch.value}`]);
-    if (!log.ok) return log;
-
-    return { ok: true, value: parseGitLog(log.value) };
+export async function getNewCommits(event: IpcMainInvokeEvent): Promise<GitResult> {
+    const result = await getUpdateStatus(event);
+    return result.ok ? { ok: true, value: (result.value as UpdateStatus).changes } : result;
 }
 
 export async function update(_event: IpcMainInvokeEvent): Promise<GitResult> {
-    return await git(["pull", "--ff-only"]);
+    if (updatePromise) return failure("AegisLogger update", "update_busy");
+    updatePromise = runInstaller("update");
+    try {
+        return await updatePromise;
+    } finally {
+        updatePromise = undefined;
+    }
 }

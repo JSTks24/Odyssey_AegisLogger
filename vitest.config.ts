@@ -4,11 +4,13 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
+import { sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { defineConfig } from "vitest/config";
 
 const r = (p: string) => fileURLToPath(new URL(p, import.meta.url));
+const pluginEntry = r("./index.tsx").split(sep).join("/");
 
 export default defineConfig({
     test: {
@@ -27,7 +29,7 @@ export default defineConfig({
             { find: "@utils/modal", replacement: r("./tests/mocks/utilsModal.ts") },
             { find: "@utils/discord", replacement: r("./tests/mocks/utilsDiscord.ts") },
             { find: "@utils/misc", replacement: r("./tests/mocks/utilsMisc.ts") },
-            { find: /^.*[\\/]Odyssey_AegisLogger[\\/]index\.tsx$/, replacement: r("./tests/mocks/pluginIndex.ts") }
+            { find: pluginEntry, replacement: r("./tests/mocks/pluginIndex.ts") }
         ]
     }
 });

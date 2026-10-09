@@ -5,6 +5,7 @@
  */
 
 import { execFileSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -28,12 +29,32 @@ const FORBIDDEN_STARTUP_FLAGS = [
 ];
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const windowScript = path.join(scriptDir, "v01-window.ps1");
-const REMAINING_BLOB_SOURCE = {
-    report: ".playwright-mcp/accept2/b01-report.json",
-    url: "blob:https://discord.com/b57b70e9-9759-4fb2-bc81-dda723d9b4a8?format=webp&width=385&height=512#",
-    scenarioId: "boundary",
+const DEFAULT_BLOB_SOURCE = {
+    kind: "query-before-fragment-pattern",
+    inputProvided: false,
     missingIdentityFields: ["messageId", "elementId", "requestId", "provenance"]
 };
+
+function readHistoricalBlobSource(file) {
+    if (file == null) return { ok: true, source: DEFAULT_BLOB_SOURCE };
+    try {
+        const source = JSON.parse(readFileSync(file, "utf8"));
+        if (typeof source?.url !== "string" || !source.url.startsWith("blob:")) return { ok: false, error: "historical_blob_source_invalid" };
+        return {
+            ok: true,
+            source: {
+                inputProvided: true,
+                report: typeof source.report === "string" ? source.report : null,
+                url: source.url,
+                scenarioId: typeof source.scenarioId === "string" ? source.scenarioId : null,
+                ...Object.fromEntries(DEFAULT_BLOB_SOURCE.missingIdentityFields.filter(field => source[field] != null).map(field => [field, source[field]])),
+                missingIdentityFields: DEFAULT_BLOB_SOURCE.missingIdentityFields.filter(field => source[field] == null)
+            }
+        };
+    } catch {
+        return { ok: false, error: "historical_blob_source_unavailable" };
+    }
+}
 
 function blobBase(url) {
     if (typeof url !== "string" || !url.startsWith("blob:")) return null;
@@ -300,7 +321,7 @@ async function settleMediaScenario({ client, monitor, scenarioId, targets, obser
     return { ...verdict, summary };
 }
 
-function evaluateBlobInvestigation(events) {
+function evaluateBlobInvestigation(events, source = DEFAULT_BLOB_SOURCE) {
     const reproduced = events.filter(event => {
         const query = event.url.indexOf("?");
         const fragment = event.url.indexOf("#");
@@ -313,7 +334,7 @@ function evaluateBlobInvestigation(events) {
     return {
         status,
         evidence: {
-            source: REMAINING_BLOB_SOURCE,
+            source,
             reason: targetFailures.length > 0 ? "managed-target-failure-reproduced" : status === "pass" ? "explicit-non-target-preload-provenance-and-target-display-confirmed" : reproduced.length === 0 ? "shape-not-reproduced-original-component-identity-missing" : "resource-or-component-or-request-provenance-unresolved",
             reproduced,
             targetFailures,
@@ -334,7 +355,8 @@ function windowOp(op, hwnd) {
     return execFileSync("powershell", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", windowScript, "-Op", op, "-Hwnd", String(hwnd)], { encoding: "utf8", windowsHide: true }).trim();
 }
 
-async function run({ pageWs, outDir, adapters = {} }) {
+async function run({ pageWs, outDir, historicalSourcePath, adapters = {} }) {
+    const historical = readHistoricalBlobSource(historicalSourcePath);
     let ws;
     let client;
     let monitor;
@@ -349,6 +371,10 @@ async function run({ pageWs, outDir, adapters = {} }) {
         scriptVersion: SCRIPT_VERSION,
         reportPath: path.join(outDir, "b01-report.json"),
         execute: async ({ results, scope }) => {
+            if (!historical.ok) {
+                recordResult(results, "历史 Blob 证据输入", "fail", { reason: historical.error });
+                return;
+            }
             if (adapters.connect != null) ({ ws, client } = await adapters.connect(pageWs));
             else {
                 ws = new WebSocket(pageWs);
@@ -378,8 +404,8 @@ async function run({ pageWs, outDir, adapters = {} }) {
                 monitor.ingestDom(await client.evalJson(expressions.drain));
                 const summary = await monitor.flush();
                 recordResult(results, "收尾媒体错误结算", summary.managedFailures.length > 0 ? "fail" : summary.unknownFailures.length > 0 ? "blocked" : "pass", summary);
-                const investigation = evaluateBlobInvestigation(monitor.ledger.events());
-                recordResult(results, "旧 query-before-fragment Blob 失败定向核实", investigation.status, investigation.evidence);
+                const investigation = evaluateBlobInvestigation(monitor.ledger.events(), historical.source);
+                recordResult(results, "query-before-fragment Blob 失败定向核实", investigation.status, investigation.evidence);
             });
             scope.add(async () => {
                 if (!probeInstalled) return;
@@ -614,16 +640,22 @@ async function run({ pageWs, outDir, adapters = {} }) {
                 if (ws != null) ws.close();
             }
         },
-        extra: () => ({ resourceSummary: monitor?.summary() ?? null, resourceEvents: monitor?.ledger.events() ?? [], resourceHistory: monitor?.history() ?? [], requestHistory: monitor?.requestHistory() ?? [], unresolvedRequests: monitor?.unresolvedRequests() ?? [], historicalEvents: monitor?.historicalEvents() ?? [], targetedBlobInvestigation: evaluateBlobInvestigation(monitor?.ledger.events() ?? []), hydratedBases: [...hydratedBases], mediaScenarios })
+        extra: () => ({ resourceSummary: monitor?.summary() ?? null, resourceEvents: monitor?.ledger.events() ?? [], resourceHistory: monitor?.history() ?? [], requestHistory: monitor?.requestHistory() ?? [], unresolvedRequests: monitor?.unresolvedRequests() ?? [], historicalEvents: monitor?.historicalEvents() ?? [], targetedBlobInvestigation: evaluateBlobInvestigation(monitor?.ledger.events() ?? [], historical.source), hydratedBases: [...hydratedBases], mediaScenarios })
     });
 }
 
-const b01 = { run, createMediaMonitor, settleMediaScenario, evaluateBlobInvestigation, expressions, blobBase };
+const b01 = { run, createMediaMonitor, settleMediaScenario, evaluateBlobInvestigation, readHistoricalBlobSource, expressions, blobBase };
 
 export default b01;
 
 if (process.argv[1] != null && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-    const [pageWs, outDir] = process.argv.slice(2);
+    const args = process.argv.slice(2);
+    const [pageWs, outDir] = args;
+    const historicalIndex = args.indexOf("--historical-blob-source");
+    const historicalSourcePath = historicalIndex < 0 ? undefined : args[historicalIndex + 1];
     if (pageWs == null || outDir == null) process.exitCode = 2;
-    else process.exitCode = (await run({ pageWs, outDir })).exitCode;
+    else if (historicalIndex >= 0 && historicalSourcePath == null) {
+        process.stderr.write("--historical-blob-source requires a JSON file path\n");
+        process.exitCode = 2;
+    } else process.exitCode = (await run({ pageWs, outDir, historicalSourcePath })).exitCode;
 }

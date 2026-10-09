@@ -186,7 +186,8 @@ export function getNative(): PluginNative<typeof import("../native")> {
             closeNativeLogImport: async () => { },
             getRepoInfo: async () => ({ ok: true, value: { repo: "", branch: "", gitHash: "" } }),
             getNewCommits: async () => ({ ok: true, value: [] }),
-            update: async () => ({ ok: true, value: "" })
+            getUpdateStatus: async () => ({ ok: false, cmd: "AegisLogger check", message: "desktop_only", error: null }),
+            update: async () => ({ ok: false, cmd: "AegisLogger update", message: "desktop_only", error: null })
         } satisfies PluginNative<typeof import("../native")>;
 
         return Native;

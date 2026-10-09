@@ -6,20 +6,13 @@
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { GitError, GitResult } from "../types";
-
-type MockNative = {
-    getRepoInfo: () => Promise<GitResult>;
-    getNewCommits: () => Promise<GitResult>;
-    update: () => Promise<GitResult>;
-};
+import type { GitResult, UpdateStatus } from "../types";
 
 const { mockNative } = vi.hoisted(() => ({
     mockNative: {
-        getRepoInfo: async () => ({ ok: true, value: { repo: "", branch: "", gitHash: "" } }),
-        getNewCommits: async () => ({ ok: true, value: [] }),
-        update: async () => ({ ok: true, value: "" })
-    } as MockNative
+        getUpdateStatus: vi.fn<() => Promise<GitResult>>(),
+        update: vi.fn<() => Promise<GitResult>>()
+    }
 }));
 
 vi.mock("../utils/misc", () => ({ getNative: () => mockNative }));
@@ -28,124 +21,159 @@ vi.mock("@api/Notifications", () => ({ showNotification: vi.fn() }));
 vi.mock("@utils/native", () => ({ relaunch: vi.fn() }));
 
 import { showNotification } from "@api/Notifications";
+import { Alerts } from "@webpack/common";
 
 import { parseGitLog } from "../native/updater";
 import updater from "../utils/updater";
 
-const commit = (hash: string) => ({ hash, author: "JST", message: "msg" });
+const commit = (hash: string) => ({ hash, author: "author", message: "change" });
+const status = (patch: Partial<UpdateStatus> = {}): UpdateStatus => ({
+    info: { repo: "https://example.test/plugin", branch: "main", gitHash: "h1", installedHash: "h1" },
+    changes: [commit("h2")],
+    state: "behind",
+    pendingBuild: false,
+    ...patch
+});
+const failure = () => ({ ok: false, cmd: "AegisLogger check", message: "network_failed", error: null } as const);
 
 beforeEach(() => {
+    updater.stop();
+    updater.start();
     vi.unstubAllGlobals();
     vi.clearAllMocks();
-    mockNative.getRepoInfo = async () => ({ ok: true, value: { repo: "https://github.com/JSTks24/Odyssey_AegisLogger", branch: "main", gitHash: "h1" } });
-    mockNative.getNewCommits = async () => ({ ok: true, value: [commit("h2")] });
-    mockNative.update = async () => ({ ok: true, value: "" });
+    mockNative.getUpdateStatus.mockResolvedValue({ ok: true, value: status() });
+    mockNative.update.mockResolvedValue({ ok: true, value: status({ changes: [], state: "current" }) });
 });
 
 describe("parseGitLog", () => {
-    it("parses hash, author and message per line", () => {
-        const commits = parseGitLog("abc123;JST;Fix thing\ndef456;Alice;Add feature; with semicolon");
-
-        expect(commits).toEqual([
-            { hash: "abc123", author: "JST", message: "Fix thing" },
-            { hash: "def456", author: "Alice", message: "Add feature; with semicolon" }
-        ]);
-    });
-
-    it("returns an empty list for empty output", () => {
-        expect(parseGitLog("")).toEqual([]);
-    });
-
-    it("drops blank and malformed lines", () => {
-        expect(parseGitLog("\n   \ngarbage\nh2;JST;ok")).toEqual([
-            { hash: "h2", author: "JST", message: "ok" }
+    it("preserves semicolons in subjects and ignores malformed rows", () => {
+        expect(parseGitLog("\ninvalid\nabc;Alice;fix; more\n")).toEqual([
+            { hash: "abc", author: "Alice", message: "fix; more" }
         ]);
     });
 });
 
-describe("deriveUpdateState", () => {
-    it("is up to date when there are no new commits", () => {
-        expect(updater.deriveUpdateState([], "h1")).toEqual({ isOutdated: false, isNewer: false });
-    });
-
-    it("is outdated when the local hash is not among the new commits", () => {
-        expect(updater.deriveUpdateState([commit("h2"), commit("h3")], "h1")).toEqual({ isOutdated: true, isNewer: false });
-    });
-
-    it("treats the local hash inside the list as locally newer", () => {
-        expect(updater.deriveUpdateState([commit("h2"), commit("h1")], "h1")).toEqual({ isOutdated: false, isNewer: true });
-    });
-
-    it("works without repo info", () => {
-        expect(updater.deriveUpdateState([commit("h2")], undefined)).toEqual({ isOutdated: true, isNewer: false });
-    });
-});
-
-describe("isNotGitRepoError", () => {
-    const error = (message: string): GitError => ({ ok: false, cmd: "git pull", message, error: null });
-
-    it("detects git's not-a-repository stderr", () => {
-        expect(updater.isNotGitRepoError(error("fatal: not a git repository (or any of the parent directories): .git"))).toBe(true);
-    });
-
-    it("detects the native pre-check marker", () => {
-        expect(updater.isNotGitRepoError(error("not a git repository"))).toBe(true);
-    });
-
-    it("rejects unrelated errors", () => {
-        expect(updater.isNotGitRepoError(error("Could not resolve host"))).toBe(false);
-    });
-});
-
-describe("checkForUpdates", () => {
-    it("marks outdated and stores the new commits", async () => {
-        await updater.checkForUpdates();
-
-        expect(updater.isOutdated).toBe(true);
+describe("update status", () => {
+    it("checks the shared installer once and exposes installed information", async () => {
+        expect(await updater.checkForUpdates()).toBe(true);
+        expect(mockNative.getUpdateStatus).toHaveBeenCalledOnce();
+        expect(updater.repoInfo?.installedHash).toBe("h1");
         expect(updater.changes).toEqual([commit("h2")]);
-        expect(updater.lastError).toBeUndefined();
     });
 
-    it("keeps lastError when the native check fails", async () => {
-        mockNative.getNewCommits = async () => ({ ok: false, cmd: "git fetch", message: "Could not resolve host", error: null });
+    it("offers a build retry even with no new commits", async () => {
+        mockNative.getUpdateStatus.mockResolvedValue({ ok: true, value: status({ state: "current", changes: [], pendingBuild: true }) });
+        expect(await updater.checkForUpdates()).toBe(true);
+        expect(updater.pendingBuild).toBe(true);
+    });
 
+    it.each(["ahead", "diverged", "detached", "missing_upstream", "dirty"] as const)("does not offer unsafe update in %s state", async state => {
+        mockNative.getUpdateStatus.mockResolvedValue({ ok: true, value: status({ state }) });
+        expect(await updater.checkForUpdates()).toBe(false);
+        expect(updater.state).toBe(state);
+        expect(updater.isNewer).toBe(state === "ahead");
+    });
+
+    it("clears a previous update offer after failed checking", async () => {
         await updater.checkForUpdates();
+        mockNative.getUpdateStatus.mockResolvedValue(failure());
+        expect(await updater.checkForUpdates()).toBe(false);
+        expect(updater.isOutdated).toBe(false);
+        expect(updater.changes).toEqual([]);
+        expect(updater.lastError?.message).toBe("network_failed");
+    });
 
-        expect(updater.lastError?.cmd).toBe("git fetch");
+    it("coalesces concurrent checks", async () => {
+        const pending = Promise.withResolvers<GitResult>();
+        mockNative.getUpdateStatus.mockReturnValue(pending.promise);
+        const first = updater.checkForUpdates();
+        const second = updater.checkForUpdates();
+        pending.resolve({ ok: true, value: status() });
+        await Promise.all([first, second]);
+        expect(mockNative.getUpdateStatus).toHaveBeenCalledOnce();
+    });
+
+    it("handles rejected native checks", async () => {
+        mockNative.getUpdateStatus.mockRejectedValue(new Error("offline"));
+        expect(await updater.checkForUpdates()).toBe(false);
+        expect(updater.lastError?.message).toBe("operation_failed");
     });
 });
 
-describe("checkForUpdatesAndNotify", () => {
-    it("does nothing on web", async () => {
-        vi.stubGlobal("IS_WEB", true);
-        const getNewCommits = vi.fn();
-        mockNative.getNewCommits = getNewCommits;
-
-        await updater.checkForUpdatesAndNotify(true);
-
-        expect(getNewCommits).not.toHaveBeenCalled();
+describe("update completion and lifecycle", () => {
+    it("uses the shared transaction without invoking the host rebuild IPC", async () => {
+        const rebuild = vi.fn();
+        vi.stubGlobal("VencordNative", { updater: { rebuild } });
+        expect(await updater.update()).toBe(true);
+        expect(rebuild).not.toHaveBeenCalled();
+        expect(Alerts.show).toHaveBeenCalledWith(expect.objectContaining({ title: "Update Success!" }));
     });
 
-    it("notifies after the delay when updates are available", async () => {
+    it("refreshes pending build state after failure and keeps recovery feedback", async () => {
+        mockNative.update.mockResolvedValue(failure());
+        mockNative.getUpdateStatus.mockResolvedValue({ ok: true, value: status({ state: "current", changes: [], pendingBuild: true }) });
+        expect(await updater.update()).toBe(false);
+        expect(updater.pendingBuild).toBe(true);
+        expect(updater.isOutdated).toBe(true);
+        expect(updater.lastError?.message).toBe("network_failed");
+    });
+
+    it("rejects duplicate update requests", async () => {
+        const pending = Promise.withResolvers<GitResult>();
+        mockNative.update.mockReturnValue(pending.promise);
+        const first = updater.update();
+        expect(await updater.update()).toBe(false);
+        pending.resolve({ ok: true, value: status({ state: "current" }) });
+        await first;
+        expect(mockNative.update).toHaveBeenCalledOnce();
+    });
+
+    it("drops late results after stopping", async () => {
+        const pending = Promise.withResolvers<GitResult>();
+        mockNative.getUpdateStatus.mockReturnValue(pending.promise);
+        const check = updater.checkForUpdates();
+        updater.stop();
+        pending.resolve({ ok: true, value: status() });
+        expect(await check).toBe(false);
+        expect(updater.isOutdated).toBe(false);
+    });
+
+    it("does not revive an update waiting for a retired check after restarting", async () => {
+        const pending = Promise.withResolvers<GitResult>();
+        mockNative.getUpdateStatus.mockReturnValue(pending.promise);
+        const check = updater.checkForUpdates();
+        const update = updater.update();
+        updater.stop();
+        updater.start();
+        pending.resolve({ ok: true, value: status() });
+        await check;
+        expect(await update).toBe(false);
+        expect(mockNative.update).not.toHaveBeenCalled();
+    });
+
+    it("cancels delayed notifications and stale notification clicks", async () => {
         vi.stubGlobal("IS_WEB", false);
         vi.useFakeTimers();
         try {
             await updater.checkForUpdatesAndNotify(true);
-            vi.advanceTimersByTime(15_000);
-
-            expect(showNotification).toHaveBeenCalledOnce();
-            expect(showNotification).toHaveBeenCalledWith(expect.objectContaining({ title: "AegisLogger" }));
+            updater.stop();
+            vi.advanceTimersByTime(15000);
+            expect(showNotification).not.toHaveBeenCalled();
+            updater.start();
+            await updater.checkForUpdatesAndNotify(true);
+            vi.advanceTimersByTime(15000);
+            const notification = vi.mocked(showNotification).mock.calls[0][0];
+            updater.stop();
+            notification.onClick?.();
+            expect(mockNative.update).not.toHaveBeenCalled();
         } finally {
             vi.useRealTimers();
         }
     });
 
-    it("does not notify when up to date", async () => {
-        vi.stubGlobal("IS_WEB", false);
-        mockNative.getNewCommits = async () => ({ ok: true, value: [] });
-
+    it("does not check on web", async () => {
+        vi.stubGlobal("IS_WEB", true);
         await updater.checkForUpdatesAndNotify(true);
-
-        expect(showNotification).not.toHaveBeenCalled();
+        expect(mockNative.getUpdateStatus).not.toHaveBeenCalled();
     });
 });

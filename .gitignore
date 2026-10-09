@@ -3,3 +3,5 @@ node_modules/
 .playwright-mcp/
 .playwright*
 Vencord/
+tsconfig.host.json
+.aegislogger-*

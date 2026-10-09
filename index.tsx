@@ -247,10 +247,12 @@ export default definePlugin({
 
         setupContextMenuPatches();
 
+        updater.start();
         void updater.checkForUpdatesAndNotify(settings.store.autoCheckForUpdates);
     },
 
     stop() {
+        updater.stop();
         pluginRuntime.stop();
         messageLoggerScope.stop();
 

@@ -8,6 +8,13 @@ import fs from "node:fs";
 
 const pageWs = process.argv[2];
 const outDir = process.argv[3];
+const routes = process.argv.slice(4);
+
+if (!/^wss?:\/\//.test(pageWs ?? "") || !outDir || routes.length !== 3
+    || routes.some(route => !/^\/channels\/(?:@me|\d{17,20})\/\d{17,20}(?:\/\d{17,20})?$/.test(route))) {
+    process.stderr.write("Usage: node scripts/evidence-mangle.mjs <page-websocket> <output-dir> <first-message-route> <intermediate-channel-route> <second-message-route>\nProvide the three Discord /channels/... routes explicitly.\n");
+    process.exit(2);
+}
 
 const ws = new WebSocket(pageWs);
 await new Promise((res, rej) => { ws.onopen = res; ws.onerror = () => rej(new Error("ws connect failed")); });
@@ -91,13 +98,13 @@ async function main() {
     const installed = await json(INSTALL_TRAP);
     console.log("trap:", installed);
 
-    await json(`(() => { const nav = window.Vencord.Webpack.Common.NavigationRouter; nav.transitionTo("/channels/1134557553011998840/1506360274888691772/1550521294284660856"); return 1; })()`);
+    await json(`(() => { const nav = window.Vencord.Webpack.Common.NavigationRouter; nav.transitionTo(${JSON.stringify(routes[0])}); return 1; })()`);
     await sleep(9000);
 
-    await json(`(() => { const nav = window.Vencord.Webpack.Common.NavigationRouter; nav.transitionTo("/channels/1134557553011998840/1134831366832394320"); return 1; })()`);
+    await json(`(() => { const nav = window.Vencord.Webpack.Common.NavigationRouter; nav.transitionTo(${JSON.stringify(routes[1])}); return 1; })()`);
     await sleep(6000);
 
-    await json(`(() => { const nav = window.Vencord.Webpack.Common.NavigationRouter; nav.transitionTo("/channels/1134557553011998840/1527639652960305162/1550704686980665360"); return 1; })()`);
+    await json(`(() => { const nav = window.Vencord.Webpack.Common.NavigationRouter; nav.transitionTo(${JSON.stringify(routes[2])}); return 1; })()`);
     await sleep(9000);
 
     const trap = await json(`JSON.stringify(window.__mangleTrap.slice(0, 12))`);

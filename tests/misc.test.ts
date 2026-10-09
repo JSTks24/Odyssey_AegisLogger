@@ -30,6 +30,7 @@ import {
     discordIdToDate,
     findLastIndex,
     getMessageStatus,
+    getNative,
     hasPingged,
     isGhostPinged,
     isImageAttachment,
@@ -39,7 +40,17 @@ import {
 } from "../utils/misc";
 
 beforeEach(() => {
+    vi.unstubAllGlobals();
     UserStore.getCurrentUser = () => ({ id: "self" });
+});
+
+describe("web update bridge", () => {
+    it("reports desktop-only installation instead of claiming a web update succeeded", async () => {
+        vi.stubGlobal("IS_WEB", true);
+        const native = getNative();
+        expect(await native.getUpdateStatus()).toMatchObject({ ok: false, message: "desktop_only" });
+        expect(await native.update()).toMatchObject({ ok: false, message: "desktop_only" });
+    });
 });
 
 describe("getMessageStatus", () => {
