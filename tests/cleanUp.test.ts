@@ -68,6 +68,47 @@ describe("cleanupMessage", () => {
         expect(ret.ghostPinged).toBeUndefined();
     });
 
+    it("does not clear private author fields on the caller's object", () => {
+        const author = { id: "u1", username: "alice", phone: "090", email: "a@b.c" };
+        const ret = cleanupMessage(makeMessage({ author }));
+
+        expect(ret.author).not.toBe(author);
+        expect(ret.author.email).toBeUndefined();
+        expect(ret.author.phone).toBeUndefined();
+        expect(author.email).toBe("a@b.c");
+        expect(author.phone).toBe("090");
+    });
+
+    it("preserves the author prototype while stripping private fields", () => {
+        class Author {
+            id = "u1";
+            username = "alice";
+            avatar = "avatar";
+            phone = "090";
+            email = "a@b.c";
+
+            get tag() {
+                return `${this.username}#0001`;
+            }
+
+            getAvatarURL() {
+                return `${this.id}/${this.avatar}`;
+            }
+        }
+
+        const author = new Author();
+        const ret = cleanupMessage(makeMessage({ author }));
+
+        expect(ret.author).not.toBe(author);
+        expect(Object.getPrototypeOf(ret.author)).toBe(Author.prototype);
+        expect(ret.author.tag).toBe("alice#0001");
+        expect(ret.author.getAvatarURL()).toBe("u1/avatar");
+        expect(ret.author.email).toBeUndefined();
+        expect(ret.author.phone).toBeUndefined();
+        expect(author.email).toBe("a@b.c");
+        expect(author.phone).toBe("090");
+    });
+
     it("stamps the deletion time of deleted messages", () => {
         const ret = cleanupMessage(makeMessage({ deleted: true }));
 
@@ -114,16 +155,21 @@ describe("cleanupMessage", () => {
     });
 
     it("cleans referenced messages of replies recursively", () => {
+        const author = { id: "u2", username: "bob", phone: "111", email: "b@c.d" };
         const ret = cleanupMessage(makeMessage({
             type: 19,
             message_reference: { channel_id: "100", message_id: "0" },
-            referenced_message: makeMessage({ id: "0", author: { id: "u2", username: "bob", phone: "111" }, content: "root" })
+            referenced_message: makeMessage({ id: "0", author, content: "root" })
         }));
 
         expect(ret.message_reference).toEqual({ channel_id: "100", message_id: "0" });
         expect(ret.referenced_message.content).toBe("root");
+        expect(ret.referenced_message.author).not.toBe(author);
         expect(ret.referenced_message.author.phone).toBeUndefined();
+        expect(ret.referenced_message.author.email).toBeUndefined();
         expect(ret.referenced_message.deleted).toBe(false);
+        expect(author.phone).toBe("111");
+        expect(author.email).toBe("b@c.d");
     });
 
     it("accepts messageReference as the reply reference", () => {

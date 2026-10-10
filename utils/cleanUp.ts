@@ -25,8 +25,11 @@ import { getGuildIdByChannel, isGhostPinged } from "./misc";
 export function cleanupMessage(message: any, removeDetails: boolean = true): LoggedMessageJSON {
     const ret: LoggedMessageJSON = typeof message.toJS === "function" ? JSON.parse(JSON.stringify(message.toJS())) : { ...message };
     if (removeDetails) {
-        ret.author.phone = undefined;
-        ret.author.email = undefined;
+        ret.author = Object.assign(
+            Object.create(Object.getPrototypeOf(ret.author)),
+            ret.author,
+            { phone: undefined, email: undefined }
+        );
     }
 
     ret.ghostPinged = ret.mentioned ?? isGhostPinged(message);
