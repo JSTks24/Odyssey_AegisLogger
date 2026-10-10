@@ -25,8 +25,11 @@ import { getGuildIdByChannel, isGhostPinged } from "./misc";
 export function cleanupMessage(message: any, removeDetails: boolean = true): LoggedMessageJSON {
     const ret: LoggedMessageJSON = typeof message.toJS === "function" ? JSON.parse(JSON.stringify(message.toJS())) : { ...message };
     if (removeDetails) {
-        ret.author.phone = undefined;
-        ret.author.email = undefined;
+        // ret may be a shallow copy, so author can still be the caller's user object —
+        // for log records it is UserStore.getUser(...), i.e. the object Discord itself
+        // holds. Clear the private fields on a copy instead of writing through it.
+        if (!ret.author) throw new Error("Cannot strip private fields without an author.");
+        ret.author = { ...ret.author, phone: undefined, email: undefined };
     }
 
     ret.ghostPinged = ret.mentioned ?? isGhostPinged(message);

@@ -68,6 +68,17 @@ describe("cleanupMessage", () => {
         expect(ret.ghostPinged).toBeUndefined();
     });
 
+    it("does not clear private author fields on the caller's object", () => {
+        const author = { id: "u1", username: "alice", phone: "090", email: "a@b.c" };
+        const ret = cleanupMessage(makeMessage({ author }));
+
+        expect(ret.author).not.toBe(author);
+        expect(ret.author.email).toBeUndefined();
+        expect(ret.author.phone).toBeUndefined();
+        expect(author.email).toBe("a@b.c");
+        expect(author.phone).toBe("090");
+    });
+
     it("stamps the deletion time of deleted messages", () => {
         const ret = cleanupMessage(makeMessage({ deleted: true }));
 
