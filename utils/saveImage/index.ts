@@ -20,10 +20,14 @@ import { MessageAttachment } from "@vencord/discord-types";
 
 import { logger, settings } from "../..";
 import { LoggedAttachment, LoggedMessage, LoggedMessageJSON } from "../../types";
+import attachmentFiles from "../attachmentFiles";
 import { deleteImage, downloadAttachment, getImage, } from "./ImageManager";
+
+const { normalizeFileExtension } = attachmentFiles;
 
 const DEFAULT_CACHE_BUDGET = 2000;
 const DISPLAY_URL_SUFFIX = "#";
+const READ_CONCURRENCY = 8;
 
 interface blobResource {
     key: string;
@@ -31,6 +35,7 @@ interface blobResource {
     refs: number;
     cached: boolean;
     revoked: boolean;
+    video: boolean;
 }
 
 interface inflightRead {
@@ -62,6 +67,8 @@ const cachedResources = new Map<string, blobResource>();
 const resourcesByUrl = new Map<string, blobResource>();
 const liveResources = new Set<blobResource>();
 const inflightReads = new Map<string, inflightRead>();
+const queuedReads: { generation: number; start(): void; cancel(): void }[] = [];
+let activeReads = 0;
 
 let cacheGeneration = 0;
 let cacheBudget = DEFAULT_CACHE_BUDGET;
@@ -71,6 +78,11 @@ let releaseBlobUrl: (url: string) => void = () => { };
 
 export function displayAttachmentUrl(url: string) {
     return `${url}${DISPLAY_URL_SUFFIX}`;
+}
+
+export function videoPoster(url: string) {
+    const base = resolveManagedAttachmentBase(url);
+    return base != null && resourcesByUrl.get(base)?.video ? undefined : url;
 }
 
 export function resolveManagedAttachmentBase(url: string) {
@@ -222,8 +234,8 @@ function evictOverflow(incoming: number) {
     }
 }
 
-async function readResource(key: string, id: string, fileExtension: string | null | undefined, generation: number): Promise<blobResource | null> {
-    const imageData = await getImage(id, fileExtension);
+async function readResource(key: string, attachment: LoggedAttachment, generation: number): Promise<blobResource | null> {
+    const imageData = await getImage(attachment.id, attachment.fileExtension);
     if (!imageData) return null;
 
     const url = URL.createObjectURL(new Blob([imageData]));
@@ -233,13 +245,36 @@ async function readResource(key: string, id: string, fileExtension: string | nul
         return null;
     }
 
-    const resource: blobResource = { key, url, refs: 1, cached: true, revoked: false };
+    const video = attachment.content_type?.startsWith("video/") || /\.(mp4|webm|mov|mkv|avi)$/i.test(attachment.filename ?? attachment.fileExtension ?? "");
+    const resource: blobResource = { key, url, refs: 1, cached: true, revoked: false, video };
     evictOverflow(1);
     cachedResources.set(key, resource);
     resourcesByUrl.set(url, resource);
     liveResources.add(resource);
 
     return resource;
+}
+
+function scheduleRead(key: string, attachment: LoggedAttachment, generation: number): Promise<blobResource | null> {
+    return new Promise((resolve, reject) => {
+        const read = {
+            generation,
+            cancel() { resolve(null); },
+            start() {
+                if (generation !== cacheGeneration) {
+                    resolve(null);
+                    return;
+                }
+                activeReads++;
+                readResource(key, attachment, generation).then(resolve, reject).finally(() => {
+                    activeReads--;
+                    while (activeReads < READ_CONCURRENCY && queuedReads.length > 0) queuedReads.shift()!.start();
+                });
+            }
+        };
+        if (activeReads < READ_CONCURRENCY) read.start();
+        else queuedReads.push(read);
+    });
 }
 
 export async function acquireAttachmentBlobUrl(attachment: LoggedAttachment): Promise<attachmentLease | null> {
@@ -257,7 +292,7 @@ export async function acquireAttachmentBlobUrl(attachment: LoggedAttachment): Pr
     if (read == null) {
         const generation = cacheGeneration;
         const created: inflightRead = { task: null as unknown as Promise<blobResource | null>, reserved: true };
-        created.task = readResource(key, id, attachment.fileExtension, generation)
+        created.task = scheduleRead(key, attachment, generation)
             .finally(() => {
                 if (inflightReads.get(key) === created) inflightReads.delete(key);
             });
@@ -337,6 +372,7 @@ export function createLeaseScope(): leaseScope {
 
 export function clearAttachmentBlobCache() {
     cacheGeneration++;
+    for (const read of queuedReads.splice(0)) read.cancel();
 
     for (const resource of [...cachedResources.values()]) dropFromCache(resource);
 }
@@ -359,6 +395,7 @@ export function resetAttachmentBlobCacheForTests() {
     cachedResources.clear();
     inflightReads.clear();
     cacheGeneration++;
+    for (const read of queuedReads.splice(0)) read.cancel();
     cacheBudget = DEFAULT_CACHE_BUDGET;
 }
 
@@ -377,7 +414,7 @@ export function getFileExtension(str: string) {
     const matches = str.match(/(\.[a-zA-Z0-9]+)(?:\?.*)?$/);
     if (!matches) return null;
 
-    return matches[1];
+    return normalizeFileExtension(matches[1]);
 }
 
 export function isAttachmentGoodToCache(attachment: MessageAttachment, fileExtension: string) {
@@ -390,7 +427,7 @@ export function isAttachmentGoodToCache(attachment: MessageAttachment, fileExten
     if (attachmentFileExtensionsStr === "")
         return true;
 
-    const allowedFileExtensions = attachmentFileExtensionsStr.split(",");
+    const allowedFileExtensions = attachmentFileExtensionsStr.toLowerCase().split(",").map(extension => extension.trim());
 
     if (fileExtension.startsWith(".")) {
         fileExtension = fileExtension.slice(1);
@@ -410,26 +447,16 @@ export async function cacheMessageImages(message: LoggedMessage | LoggedMessageJ
             if (filter != null && !filter(attachment))
                 continue;
 
-            if (attachment.path != null)
-                continue;
+            if (attachment.path != null) {
+                if (await getImage(attachment.id, attachment.fileExtension)) continue;
+                attachment.path = null;
+            }
 
-            const fileExtension = getFileExtension(attachment.filename ?? attachment.url) ?? attachment.content_type?.split("/")?.[1] ?? ".png";
+            const fileExtension = getFileExtension(attachment.filename ?? attachment.url) ?? normalizeFileExtension(attachment.content_type) ?? ".png";
 
             if (!isAttachmentGoodToCache(attachment, fileExtension)) {
                 logger.log("skipping", attachment.filename);
                 continue;
-            }
-
-            attachment.oldUrl = attachment.url;
-            attachment.oldProxyUrl = attachment.proxy_url;
-
-            // only normal urls work if theres a charset in the content type /shrug
-            if (attachment.content_type?.includes(";")) {
-                attachment.proxy_url = attachment.url;
-            } else {
-                // apparently proxy urls last longer
-                attachment.url = attachment.proxy_url;
-                attachment.proxy_url = attachment.url;
             }
 
             attachment.fileExtension = fileExtension;
@@ -452,6 +479,6 @@ export async function cacheMessageImages(message: LoggedMessage | LoggedMessageJ
 export async function deleteMessageImages(message: LoggedMessage | LoggedMessageJSON) {
     for (let i = 0; i < message.attachments.length; i++) {
         const attachment = message.attachments[i];
-        await deleteImage(attachment.id);
+        await deleteImage(attachment.id, attachment.fileExtension ?? getFileExtension(attachment.filename ?? attachment.url));
     }
 }

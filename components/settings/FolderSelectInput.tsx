@@ -21,7 +21,7 @@ import { Button } from "@components/Button";
 import { copyWithToast } from "@utils/discord";
 import { classes } from "@utils/misc";
 import { findCssClassesLazy } from "@webpack";
-import { showToast } from "@webpack/common";
+import { showToast, useState } from "@webpack/common";
 
 import { Native, settings } from "../..";
 import { DEFAULT_IMAGE_CACHE_DIR } from "../../utils/constants";
@@ -54,6 +54,7 @@ interface Props {
 
 export function SelectFolderInput({ settingsKey, successMessage }: Props) {
     const path = settings.store[settingsKey];
+    const [pending, setPending] = useState(false);
 
     function getDirName(path: string) {
         const parts = path.split("\\").length > 1 ? path.split("\\") : path.split("/");
@@ -62,15 +63,25 @@ export function SelectFolderInput({ settingsKey, successMessage }: Props) {
     }
 
     async function onFolderSelect() {
+        if (pending) return;
+        setPending(true);
         try {
             const res = await Native.chooseDir(settingsKey);
+            if (res == null) return;
+            if (typeof res !== "string") {
+                const key = res.error === "conflict" ? "folder.conflict" : res.error === "settings_failed" ? "folder.settingsFailed" : "folder.copyFailed";
+                showToast({ text: t(key, { filename: res.filename ?? "" }), variant: "critical" });
+                return;
+            }
             settings.store[settingsKey] = res;
 
             if (settingsKey === "imageCacheDir") clearAttachmentBlobCache();
 
-            return showToast(successMessage, "success");
+            return showToast({ text: successMessage, variant: "success" });
         } catch (err) {
-            showToast(t("folder.updateFailed"), "failure");
+            showToast({ text: t("folder.updateFailed"), variant: "critical" });
+        } finally {
+            setPending(false);
         }
     }
 
@@ -82,9 +93,10 @@ export function SelectFolderInput({ settingsKey, successMessage }: Props) {
             <Button
                 className={cl("-button")}
                 size="small"
+                disabled={pending}
                 onClick={onFolderSelect}
             >
-                {t("folder.browse")}
+                {t(pending ? "folder.updating" : "folder.browse")}
             </Button>
         </div>
     );

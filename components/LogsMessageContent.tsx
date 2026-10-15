@@ -20,6 +20,7 @@ interface contentProps {
     modules: ReturnType<typeof logMessageModules.getSnapshot>;
     channel: Channel | null | undefined;
     isGroupStart: boolean;
+    attachmentsPending?: boolean;
 }
 
 interface boundaryProps {
@@ -44,32 +45,33 @@ const MessageBoundary = LazyComponent(() => class extends React.Component<bounda
     }
 });
 
-function prepareMessage(record: LoggedMessageJSON): { message: LoggedMessage | null; removedAttachments: LoggedAttachment[] } {
+function prepareMessage(record: LoggedMessageJSON, attachmentsPending = false): { message: LoggedMessage | null; removedAttachments: LoggedAttachment[] } {
     const attachments = Array.isArray(record.attachments) ? record.attachments.filter(Boolean) : [];
     const { live, removed } = splitRemovedAttachments(attachments);
 
     try {
         const source = {
             ...record,
-            attachments: live,
-            editHistory: Array.isArray(record.editHistory) ? record.editHistory.map(edit => ({ ...edit })) : []
+            attachments: attachmentsPending ? [] : live,
+            editHistory: Array.isArray(record.editHistory) ? record.editHistory.map(edit => ({ ...edit, attachments: attachmentsPending ? [] : edit.attachments })) : []
         };
-        return { message: messageJsonToMessageClass({ message: source }), removedAttachments: removed };
+        return { message: messageJsonToMessageClass({ message: source }), removedAttachments: attachmentsPending ? [] : removed };
     } catch {
         return { message: null, removedAttachments: removed };
     }
 }
 
-function NativePreview({ record, message, modules, channel, isGroupStart }: contentProps) {
+function NativePreview({ record, message, modules, channel, isGroupStart, attachmentsPending }: contentProps) {
     const MessagePreview = modules.messagePreview;
-    if (MessagePreview == null || message == null) return <MessageSnapshot record={record} />;
+    if (MessagePreview == null || message == null) return <MessageSnapshot record={record} attachmentsPending={attachmentsPending} />;
 
     const PrivateChannelRecord = modules.privateChannelRecord;
     const previewChannel = channel ?? (PrivateChannelRecord != null ? new PrivateChannelRecord({ id: record.channel_id }) : null);
-    if (previewChannel == null) return <MessageSnapshot record={record} includeRemoved={false} />;
+    if (previewChannel == null) return <MessageSnapshot record={record} includeRemoved={!!attachmentsPending} attachmentsPending={attachmentsPending} />;
 
     return (
-        <MessagePreview
+        <>
+            <MessagePreview
             className={`aegis-modal-msg-preview ${message.deleted ? "messagelogger-deleted" : ""}`}
             author={message.author}
             message={message}
@@ -77,18 +79,20 @@ function NativePreview({ record, message, modules, channel, isGroupStart }: cont
             compact={false}
             isGroupStart={isGroupStart}
             hideSimpleEmbedContent={false}
-        />
+            />
+            {attachmentsPending && record.attachments?.map(attachment => <AttachmentPlaceholder key={attachment.id} attachment={attachment} />)}
+        </>
     );
 }
 
 function MessageContent(props: contentProps) {
-    if (props.message == null || props.modules.messagePreview == null) return <MessageSnapshot record={props.record} />;
+    if (props.message == null || props.modules.messagePreview == null) return <MessageSnapshot record={props.record} attachmentsPending={props.attachmentsPending} />;
 
     return (
         <MessageBoundary
             key={props.modules.version}
             record={props.record}
-            fallback={<MessageSnapshot record={props.record} includeRemoved={false} />}
+            fallback={<MessageSnapshot record={props.record} includeRemoved={!!props.attachmentsPending} attachmentsPending={props.attachmentsPending} />}
         >
             <NativePreview {...props} />
         </MessageBoundary>
@@ -99,10 +103,19 @@ function safeUrl(value: unknown) {
     return typeof value === "string" && /^(?:https?:|blob:|data:)/i.test(value) ? value : undefined;
 }
 
-function SnapshotAttachment({ attachment }: { attachment: LoggedAttachment }) {
+function AttachmentPlaceholder({ attachment }: { attachment: LoggedAttachment }) {
+    const width = Math.min(attachment.width || 280, 400);
+    const height = attachment.width && attachment.height ? Math.min(width * attachment.height / attachment.width, 300) : 80;
+    return <div className="aegis-modal-attachment-placeholder" style={{ width, height }} aria-busy="true">
+        <span>{attachment.filename ?? attachment.id}</span>
+    </div>;
+}
+
+function SnapshotAttachment({ attachment, pending = false }: { attachment: LoggedAttachment; pending?: boolean }) {
     const [preview, setPreview] = useState({ url: safeUrl(attachment.url), failed: false });
 
     useEffect(() => {
+        if (pending) return;
         let cancelled = false;
         let lease: attachmentLease | null = acquireAttachmentLease(attachment.url ?? "");
         setPreview({ url: safeUrl(attachment.url), failed: false });
@@ -122,7 +135,9 @@ function SnapshotAttachment({ attachment }: { attachment: LoggedAttachment }) {
             cancelled = true;
             lease?.release();
         };
-    }, [attachment.id, attachment.url, attachment.path, attachment.fileExtension]);
+    }, [attachment.id, attachment.url, attachment.path, attachment.fileExtension, pending]);
+
+    if (pending) return <AttachmentPlaceholder attachment={attachment} />;
 
     const filename = attachment.filename ?? attachment.id;
     const unavailable = preview.failed || preview.url == null;
@@ -142,7 +157,7 @@ function SnapshotAttachment({ attachment }: { attachment: LoggedAttachment }) {
     );
 }
 
-function SnapshotBody({ content, attachments, embeds, showEmpty = true }: { content: unknown; attachments: LoggedAttachment[]; embeds?: unknown[]; showEmpty?: boolean }) {
+function SnapshotBody({ content, attachments, embeds, showEmpty = true, attachmentsPending = false }: { content: unknown; attachments: LoggedAttachment[]; embeds?: unknown[]; showEmpty?: boolean; attachmentsPending?: boolean }) {
     const body = typeof content === "string" ? content : "";
     const summaries = (embeds ?? []).filter(embed => embed != null && typeof embed === "object").map(embed => {
         const value = embed as { title?: string; description?: string; url?: string; image?: { url?: string }; thumbnail?: { url?: string }; fields?: { name?: string; value?: string }[] };
@@ -155,24 +170,25 @@ function SnapshotBody({ content, attachments, embeds, showEmpty = true }: { cont
             {body !== "" && <div className="aegis-modal-snapshot-text">{body}</div>}
             {summaries.map((summary, index) => <div className="aegis-modal-snapshot-embed" key={index}>{summary}</div>)}
             {attachments.length > 0 && <div className="aegis-modal-snapshot-attachments">
-                {attachments.map((attachment, index) => <SnapshotAttachment key={`${attachment.id}:${index}`} attachment={attachment} />)}
+                {attachments.map((attachment, index) => <SnapshotAttachment key={`${attachment.id}:${index}:${attachment.url}:${attachmentsPending}`} attachment={attachment} pending={attachmentsPending} />)}
             </div>}
             {showEmpty && body === "" && summaries.length === 0 && attachments.length === 0 && <div className="aegis-modal-snapshot-empty">{t("modal.snapshot.empty")}</div>}
         </>
     );
 }
 
-function MessageSnapshot({ record, includeRemoved = true }: { record: LoggedMessageJSON; includeRemoved?: boolean }) {
+function MessageSnapshot({ record, includeRemoved = true, attachmentsPending = false }: { record: LoggedMessageJSON; includeRemoved?: boolean; attachmentsPending?: boolean }) {
+    const [historyOpen, setHistoryOpen] = useState(false);
     const allAttachments = Array.isArray(record.attachments) ? record.attachments.filter(Boolean) : [];
     const attachments = includeRemoved ? allAttachments : allAttachments.filter(attachment => !attachment.deleted);
     const history = Array.isArray(record.editHistory) ? record.editHistory.filter(Boolean) : [];
 
     return (
         <div className="aegis-modal-snapshot" data-message-id={record.id}>
-            <SnapshotBody content={record.content} attachments={attachments} embeds={Array.isArray(record.embeds) ? record.embeds : []} showEmpty={includeRemoved || allAttachments.length === 0} />
-            {history.length > 0 && <details className="aegis-modal-snapshot-history">
+            <SnapshotBody content={record.content} attachments={attachments} embeds={Array.isArray(record.embeds) ? record.embeds : []} showEmpty={includeRemoved || allAttachments.length === 0} attachmentsPending={attachmentsPending} />
+            {history.length > 0 && <details className="aegis-modal-snapshot-history" onToggle={event => setHistoryOpen(event.currentTarget.open)}>
                 <summary>{t("modal.snapshot.history", { count: history.length })}</summary>
-                {history.map((edit, index) => <div className="aegis-modal-snapshot-edit" key={index}>
+                {historyOpen && history.map((edit, index) => <div className="aegis-modal-snapshot-edit" key={index}>
                     <time>{edit.timestamp}</time>
                     <SnapshotBody
                         content={edit.content}

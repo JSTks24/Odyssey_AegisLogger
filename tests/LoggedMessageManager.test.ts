@@ -224,15 +224,16 @@ describe("addMessage", () => {
         expect(persisted()).toHaveLength(1);
     });
 
-    it("does not schedule a backfill when no attachment needs downloading", async () => {
+    it("checks an existing attachment path instead of assuming the file is still available", async () => {
         settings.store.saveImages = true;
         vi.mocked(idb.getMessageIDB).mockResolvedValue(makeRecord({ attachments: [{ id: "a1", path: "/cache/a1.png" }] }));
 
         await addMessage(makeMessage({ attachments: [{ id: "a1", path: "/cache/a1.png" }] }), DBMessageStatus.DELETED);
         await flushWrites();
 
-        expect(cacheMessageImages).not.toHaveBeenCalled();
-        expect(idb.updateMessageIfCurrentIDB).not.toHaveBeenCalled();
+        expect(cacheMessageImages).toHaveBeenCalledTimes(1);
+        expect(lastSnapshot()[0].attachments).toEqual([{ id: "a1", path: "/cache/a1.png" }]);
+        expect(idb.updateMessageIfCurrentIDB).toHaveBeenCalledTimes(1);
     });
 
     it("leaves the message limit untouched when it is disabled", async () => {

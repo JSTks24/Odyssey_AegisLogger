@@ -1,0 +1,30 @@
+/*
+ * Vencord, a Discord client mod
+ * Copyright (c) 2026 JST
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
+
+import type { LoggedAttachment } from "../types";
+
+function normalizeFileExtension(value?: string | null) {
+    const extension = value?.split(";")[0].split("/").pop()?.replace(/^\./, "").toLowerCase();
+    return extension && /^[a-z0-9]+$/.test(extension) ? `.${extension}` : null;
+}
+
+function attachmentUrls(attachment: LoggedAttachment) {
+    return [...new Set([attachment.url, attachment.proxy_url, attachment.oldUrl, attachment.oldProxyUrl]
+        .filter((url): url is string => typeof url === "string" && /^https?:\/\//i.test(url)))];
+}
+
+function attachmentFilenames(id: string, extension?: string | null) {
+    if (!id || /[\\/.:]/.test(id)) return [];
+    const normalized = normalizeFileExtension(extension);
+    if (normalized == null) return [];
+
+    return [...new Set([`${id}${normalized}`, `${id}${extension}`, `${id}${normalized.slice(1)}`])]
+        .filter(filename => !/[\\/:]/.test(filename));
+}
+
+const attachmentFiles = { normalizeFileExtension, attachmentUrls, attachmentFilenames };
+
+export default attachmentFiles;

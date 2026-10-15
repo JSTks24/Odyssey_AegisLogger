@@ -66,7 +66,6 @@ export function scheduleAttachmentBackfill(messageId: string) {
         const attachments = Array.isArray(record.message.attachments) ? record.message.attachments : [];
         const targets = attachments.filter(attachment =>
             attachment != null
-            && attachment.path == null
             && (filter === undefined || filter(attachment))
         );
         if (targets.length === 0) return null;

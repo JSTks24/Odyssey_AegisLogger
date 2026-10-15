@@ -32,7 +32,7 @@ vi.mock("../utils/misc", async importOriginal => ({
     messageJsonToMessageClass: (log: any) => log.message
 }));
 
-import { ChannelStore, MessageStore } from "@webpack/common";
+import { ChannelStore, MessageStore, UserStore } from "@webpack/common";
 
 import idb, { DBMessageStatus } from "../db";
 import { settings } from "../index";
@@ -144,7 +144,9 @@ const tick = () => new Promise(resolve => setTimeout(resolve, 0));
 
 beforeEach(async () => {
     settings.store.whitelistedIds = "";
+    settings.store.ignoreBots = false;
     ChannelStore.getChannel = () => null;
+    UserStore.getUser = () => null;
     await idb.clearMessagesIDB();
 
     messageChanges.resetForTests();
@@ -606,5 +608,85 @@ describe("whitelist replay boundaries", () => {
         settings.store.whitelistedIds = "allowed-two";
         expect(readMessage("972")).toBeNull();
         expect(await idb.getMessageIDB("972")).toBeDefined();
+    });
+});
+
+describe("ignored bot replay boundaries", () => {
+    it.each([DBMessageStatus.DELETED, DBMessageStatus.EDITED, DBMessageStatus.GHOST_PINGED])("preserves archived bots without replaying %s", async status => {
+        const archived = makeMessage("980", {
+            author: { id: "bot", bot: true }, attachments: [makeAttachment("bot-image")],
+            editHistory: [{ content: "before", timestamp: "2026-01-01T00:00:00.000Z" }]
+        });
+        await idb.addMessageIDB(archived, status);
+        settings.store.ignoreBots = true;
+        settings.store.whitelistedIds = "bot";
+        pluginRuntime.start();
+        chatBridge.start();
+        const response = makeResponse(["980"]);
+        response.body[0].author = { id: "bot", bot: true };
+        await chatBridge.processMessageFetch(response);
+        expect(response.body.extra).toBeUndefined();
+        expect(response.body[0].editHistory).toBeUndefined();
+        expect(response.body[0].attachments).toEqual([]);
+        expect(readMessage("980")).toBeNull();
+        expect(chatBridge.stats().messages).toBe(0);
+        expect((await idb.getMessageIDB("980"))?.message).toEqual(archived);
+    });
+
+    it("uses the matching response author to reject an old record without a bot flag", async () => {
+        await idb.addMessageIDB(makeMessage("981", { author: { id: "bot" } }), DBMessageStatus.DELETED);
+        settings.store.ignoreBots = true;
+        pluginRuntime.start();
+        chatBridge.start();
+        const response = makeResponse(["981"]);
+        response.body[0].author = { id: "bot", bot: true };
+        await chatBridge.processMessageFetch(response);
+        expect(response.body.extra).toBeUndefined();
+        expect(chatBridge.stats().messages).toBe(0);
+        expect(readMessage("981")).toBeNull();
+        expect((await idb.getMessageIDB("981"))?.message.author.id).toBe("bot");
+    });
+
+    it("does not borrow a different response author's bot flag while recovering server context", async () => {
+        await idb.addMessageIDB(makeMessage("982"), DBMessageStatus.DELETED);
+        settings.store.ignoreBots = true;
+        settings.store.whitelistedIds = "allowed-one";
+        pluginRuntime.start();
+        chatBridge.start();
+        const response = makeResponse(["982"]);
+        response.body[0].guild_id = "allowed-one";
+        response.body[0].author = { id: "other-bot", bot: true };
+        await chatBridge.processMessageFetch(response);
+        expect(response.body.extra).toHaveLength(1);
+        expect(readMessage("982")?.author.id).toBe("u1");
+    });
+
+    it("preserves author identity when only a response author is available", async () => {
+        await idb.addMessageIDB(makeMessage("983", { author: { id: "bot", bot: true } }), DBMessageStatus.DELETED);
+        pluginRuntime.start();
+        chatBridge.start();
+        const response = makeResponse(["983"]);
+        response.body[0].author = { id: "bot", bot: true, username: "response-bot" };
+        await chatBridge.processMessageFetch(response);
+        expect(response.body.extra[0].author).toMatchObject({ id: "bot", bot: true, username: "response-bot" });
+        settings.store.ignoreBots = true;
+        expect(readMessage("983")).toBeNull();
+        expect((await idb.getMessageIDB("983"))?.message.author.id).toBe("bot");
+    });
+
+    it("rechecks bot settings when a pending replay read settles", async () => {
+        await idb.addMessageIDB(makeMessage("984", { author: { id: "bot", bot: true } }), DBMessageStatus.DELETED);
+        pluginRuntime.start();
+        chatBridge.start();
+        const read = pauseChatRead();
+        const response = makeResponse(["984"]);
+        const pending = chatBridge.processMessageFetch(response);
+        settings.store.ignoreBots = true;
+        read.release();
+        await pending;
+        read.restore();
+        expect(response.body.extra).toBeUndefined();
+        expect(readMessage("984")).toBeNull();
+        expect(await idb.getMessageIDB("984")).toBeDefined();
     });
 });

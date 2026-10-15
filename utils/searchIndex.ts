@@ -8,11 +8,12 @@ import { ChannelStore, GuildStore } from "@webpack/common";
 
 import type { DBMessageRecord } from "../db";
 import { normalizeTimestampMs } from "./constants";
-import { doesMatch, linkRegex, QueryResult } from "./parseQuery";
+import { linkRegex, QueryResult } from "./parseQuery";
 
 const entries = new Map<string, indexedMessage>();
 const statusEntries = new Map<string, indexedMessage[]>();
 const replay: { add: boolean; id: string; entry?: indexedMessage; }[] = [];
+const readyListeners = new Set<() => void>();
 let activeBuild: { generation: number; promise: Promise<void>; } | null = null;
 let activeGeneration = 0;
 let ready = false;
@@ -131,6 +132,11 @@ function isReady() {
     return ready;
 }
 
+function subscribeReady(listener: () => void) {
+    readyListeners.add(listener);
+    return () => { readyListeners.delete(listener); };
+}
+
 function addRecords(records: DBMessageRecord[]) {
     if (activeBuild == null && !ready) return;
 
@@ -169,6 +175,7 @@ function clear() {
     entries.clear();
     statusEntries.clear();
     replay.length = 0;
+    for (const listener of readyListeners) listener();
 }
 
 function ensureReady(source: () => AsyncGenerator<DBMessageRecord[]>): Promise<void> {
@@ -209,9 +216,15 @@ function startBuild(source: () => AsyncGenerator<DBMessageRecord[]>) {
 
             entries.clear();
             statusEntries.clear();
-            for (const entry of staged.values()) publishEntry(entry);
+            for (const entry of staged.values()) {
+                entries.set(entry.id, entry);
+                statusList(entry.status).push(entry);
+            }
+            for (const list of statusEntries.values()) list.sort(compareEntries);
 
             ready = true;
+            activeBuild = null;
+            for (const listener of readyListeners) listener();
         } finally {
             if (activeBuild === build) activeBuild = null;
             if (activeGeneration === generation) replay.length = 0;
@@ -235,37 +248,27 @@ function search(queries: QueryResult[], rest: string[], status: string, limit: n
 
     const list = statusEntries.get(status) ?? [];
     const page: indexedMessage[] = [];
-    let total = 0;
+    let matched = 0;
+    const start = newest ? list.length - 1 : 0;
+    const step = newest ? -1 : 1;
 
-    if (newest) {
-        for (let i = list.length - 1; i >= 0; i--) {
-            const entry = list[i];
-            if (!matchesIndex(entry, compiled, rest)) continue;
-            total++;
-            if (total > offset && page.length < limit) page.push(entry);
-        }
-    } else {
-        for (let i = 0; i < list.length; i++) {
-            const entry = list[i];
-            if (!matchesIndex(entry, compiled, rest)) continue;
-            total++;
-            if (total > offset && page.length < limit) page.push(entry);
-        }
+    for (let i = start; i >= 0 && i < list.length; i += step) {
+        const entry = list[i];
+        if (!matchesIndex(entry, compiled, rest)) continue;
+        if (matched++ < offset) continue;
+        if (page.length === limit) return { page, hasMore: true };
+        page.push(entry);
     }
 
-    return { page, total };
+    return { page, hasMore: false };
 }
 
 function matchesRecord(record: DBMessageRecord, queries: QueryResult[], rest: string[]) {
-    const rawContent = (record.message as any).content;
-    const content = typeof rawContent === "string" ? rawContent : "";
-
-    for (const query of queries) {
-        const matching = doesMatch(query.key, query.value, record.message);
-        if (query.negate ? matching : !matching) return false;
+    try {
+        return matchesIndex(buildEntry(record), queries, rest);
+    } catch {
+        return false;
     }
-
-    return rest.every(part => content.toLowerCase().includes(part.toLowerCase()));
 }
 
 function matchesIndex(entry: indexedMessage, queries: QueryResult[], rest: string[]) {
@@ -334,6 +337,7 @@ function matchesQuery(entry: indexedMessage, query: QueryResult & { ts?: number;
 const searchIndex = {
     buildEntry,
     isReady,
+    subscribeReady,
     addRecords,
     removeIds,
     clear,

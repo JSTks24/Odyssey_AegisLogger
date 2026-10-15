@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
-import { definePluginSettings, Settings } from "@api/Settings";
+import { definePluginSettings } from "@api/Settings";
 import { Button } from "@components/Button";
 import ErrorBoundary from "@components/ErrorBoundary";
 import { OptionType } from "@utils/types";
@@ -334,9 +334,6 @@ export const settings = definePluginSettings({
         type: OptionType.BOOLEAN,
         get description() { return t("settings.ignoreBots"); },
         default: false,
-        onChange() {
-            Settings.plugins.MessageLogger.ignoreBots = false;
-        }
     },
 
     ignoreSelf: {
@@ -344,9 +341,6 @@ export const settings = definePluginSettings({
         type: OptionType.BOOLEAN,
         get description() { return t("settings.ignoreSelf"); },
         default: false,
-        onChange() {
-            Settings.plugins.MessageLogger.ignoreSelf = false;
-        }
     },
 
     ignoreMutedGuilds: {

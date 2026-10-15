@@ -31,6 +31,7 @@ vi.mock("../index", () => ({
 }));
 
 vi.mock("../utils/saveImage/ImageManager", () => ({
+    refreshImageIndex: vi.fn(async () => { }),
     getImage: vi.fn(async () => new Uint8Array([1, 2, 3])),
     downloadAttachment: vi.fn(async () => undefined),
     deleteImage: vi.fn(async () => { })
@@ -48,6 +49,7 @@ vi.mock("../db", async importOriginal => {
 });
 
 import idb from "../db";
+import { refreshImageIndex } from "../utils/saveImage/ImageManager";
 
 const addRecordSpy = idb.addMessageRecordsIDB;
 import {
@@ -293,6 +295,7 @@ describe("migrateLegacyImages", () => {
         const rerun = await migrateLegacyImages();
 
         expect(migrated).toBe(2);
+        expect(refreshImageIndex).toHaveBeenCalled();
         expect(rerun).toBe(0);
         const store = await readImageStore();
         const byKey = Object.fromEntries(store.map(e => [e.key, e.value]));

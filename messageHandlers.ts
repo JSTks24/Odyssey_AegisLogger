@@ -52,15 +52,15 @@ export async function messageDeleteHandler(payload: MessageDeletePayload) {
         }
 
         const ghostPinged = isGhostPinged(message as any);
-        const context = loggingScope.context(message);
+        const context = loggingScope.context(message, cacheSentMessages.get(`${payload.channelId},${payload.id}`));
         context.guildId = payload.guildId || (payload as any).guild_id || context.guildId;
 
         if (
             shouldIgnore({
                 channelId: message?.channel_id ?? payload.channelId,
                 guildId: loggingScope.guildId(context),
-                authorId: message?.author?.id,
-                bot: message?.bot || message?.author?.bot,
+                authorId: context.authorId,
+                bot: context.bot,
                 flags: message?.flags,
                 ghostPinged,
                 content: (message as LoggedMessageJSON).content
@@ -105,6 +105,7 @@ export async function messageUpdateHandler(payload: MessageUpdatePayload) {
             ...previous,
             ...message,
             author: message?.author ?? previous?.author,
+            bot: loggingScope.context(message, previous).bot,
             guildId: (message as any)?.guild_id || (message as any)?.guildId || previous?.guild_id || previous?.guildId
         };
         const context = loggingScope.context(payload.message, fallback);
@@ -114,7 +115,7 @@ export async function messageUpdateHandler(payload: MessageUpdatePayload) {
             channelId: channel_id,
             guildId: loggingScope.guildId(context),
             authorId: context.authorId,
-            bot: (payload.message.author as any)?.bot ?? fallback.author?.bot,
+            bot: context.bot,
             flags: payload.message.flags ?? fallback.flags,
             ghostPinged: isGhostPinged({ ...fallback, ...payload.message } as any),
             content: payload.message.content ?? fallback.content

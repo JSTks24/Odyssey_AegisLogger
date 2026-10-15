@@ -47,8 +47,6 @@ export function adoptAttachmentMetadata(target: LoggedAttachment[] | undefined |
         if (prior.oldUrl != null && attachment.oldUrl == null) {
             attachment.oldUrl = prior.oldUrl;
             if (attachment.oldProxyUrl == null && prior.oldProxyUrl != null) attachment.oldProxyUrl = prior.oldProxyUrl;
-            if (prior.url != null) attachment.url = prior.url;
-            if (prior.proxy_url != null) attachment.proxy_url = prior.proxy_url;
         }
     }
 }

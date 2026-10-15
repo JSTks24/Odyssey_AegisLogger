@@ -13,7 +13,7 @@ vi.mock("../utils/misc", () => ({
 }));
 
 import type { DBMessageRecord } from "../db";
-import { tokenizeQuery } from "../utils/parseQuery";
+import { doesMatch, tokenizeQuery } from "../utils/parseQuery";
 import searchIndex from "../utils/searchIndex";
 
 function makeRecord(id: string, overrides: Record<string, any> = {}, status = "DELETED"): DBMessageRecord {
@@ -97,10 +97,13 @@ describe("index matcher parity with the scan matcher", () => {
         const { queries, rest } = tokenizeQuery(query);
 
         for (const record of FIXTURES) {
+            const expected = queries.every(query => query.negate ? !doesMatch(query.key, query.value, record.message) : !!doesMatch(query.key, query.value, record.message))
+                && rest.every(part => record.message.content.toLowerCase().includes(part.toLowerCase()));
             expect(
                 searchIndex.matchesIndex(searchIndex.buildEntry(record), queries, rest),
                 `${query} on record ${record.message_id}`
-            ).toBe(searchIndex.matchesRecord(record, queries, rest));
+            ).toBe(expected);
+            expect(searchIndex.matchesRecord(record, queries, rest)).toBe(expected);
         }
     });
 
@@ -110,6 +113,16 @@ describe("index matcher parity with the scan matcher", () => {
         for (const record of FIXTURES) {
             expect(searchIndex.matchesIndex(searchIndex.buildEntry(record), queries, rest)).toBe(searchIndex.matchesRecord(record, queries, rest));
         }
+    });
+
+    it("handles incomplete legacy messages consistently before and after indexing", () => {
+        const record = makeRecord("1", { author: null, attachments: null, embeds: null, content: null });
+        for (const query of ["user:missing", "has:image", "has:attachment", "has:embed", "has:link", "!has:image"]) {
+            const { queries, rest } = tokenizeQuery(query);
+            expect(searchIndex.matchesRecord(record, queries, rest)).toBe(query === "!has:image");
+            expect(searchIndex.matchesIndex(searchIndex.buildEntry(record), queries, rest)).toBe(query === "!has:image");
+        }
+        expect(searchIndex.matchesRecord({ message: null } as any, [], [])).toBe(false);
     });
 });
 
@@ -246,15 +259,15 @@ describe("index container", () => {
 
         expect(newest.page.map(entry => entry.id)).toEqual(expected.slice(0, 3));
         expect(oldest.page.map(entry => entry.id)).toEqual(expected.slice(-3).reverse());
-        expect(newest.total).toBe(expected.length);
-        expect(oldest.total).toBe(expected.length);
+        expect(newest.hasMore).toBe(true);
+        expect(oldest.hasMore).toBe(true);
     });
 
     it("filters by status", async () => {
         const attachments = tokenizeQuery("has:attachment");
         const text = tokenizeQuery("alice");
 
-        expect(searchIndex.search(attachments.queries, attachments.rest, "DELETED", 100, true).total).toBe(5);
+        expect(searchIndex.search(attachments.queries, attachments.rest, "DELETED", 100, true).page).toHaveLength(5);
         expect(searchIndex.search(attachments.queries, attachments.rest, "EDITED", 10, true).page).toEqual([]);
         expect(searchIndex.search(text.queries, text.rest, "EDITED", 10, true).page.map(entry => entry.id)).toEqual(["15"]);
     });
@@ -269,11 +282,61 @@ describe("index container", () => {
         expect(searchIndex.search(queries, rest, "DELETED", 10, true).page).toEqual([]);
     });
 
-    it("reports the exact total so pagination keeps working", async () => {
+    it("reports another page without collecting the exact total", async () => {
         const { queries, rest } = tokenizeQuery("hello");
-        const { page, total } = searchIndex.search(queries, rest, "DELETED", 2, true);
+        const { page, hasMore } = searchIndex.search(queries, rest, "DELETED", 2, true);
 
         expect(page).toHaveLength(2);
-        expect(total).toBeGreaterThan(2);
+        expect(hasMore).toBe(true);
+    });
+
+    it.each([true, false])("stops after the first extra match with newest=%s", async newest => {
+        const records = Array.from({ length: 100 }, (_, index) => makeRecord(String(index + 1)));
+        searchIndex.clear();
+        await searchIndex.ensureReady(() => (async function* () { yield records; })());
+        const getChannel = vi.spyOn(webpackCommon.ChannelStore, "getChannel");
+        const { queries, rest } = tokenizeQuery("channel:chan-1");
+
+        const result = searchIndex.search(queries, rest, "DELETED", 2, newest, 1);
+
+        expect(result.hasMore).toBe(true);
+        expect(result.page.map(entry => entry.id)).toEqual(newest ? ["99", "98"] : ["2", "3"]);
+        expect(getChannel).toHaveBeenCalledTimes(4);
+        getChannel.mockRestore();
+    });
+
+    it.each([true, false])("ends exactly full and partial pages with newest=%s", async newest => {
+        const { queries, rest } = tokenizeQuery("has:attachment");
+        const first = searchIndex.search(queries, rest, "DELETED", 2, newest);
+        const second = searchIndex.search(queries, rest, "DELETED", 2, newest, 2);
+        const final = searchIndex.search(queries, rest, "DELETED", 2, newest, 4);
+        const full = searchIndex.search(queries, rest, "DELETED", 5, newest);
+
+        expect([first.hasMore, second.hasMore, final.hasMore, full.hasMore]).toEqual([true, true, false, false]);
+        expect([...first.page, ...second.page, ...final.page].map(entry => entry.id)).toEqual(full.page.map(entry => entry.id));
+        expect(searchIndex.search(queries, rest, "DELETED", 2, newest, 5)).toEqual({ page: [], hasMore: false });
+    });
+
+    it("sorts an unordered build with equal timestamps before applying later changes", async () => {
+        const timestamp = "2026-01-01T12:00:00Z";
+        searchIndex.clear();
+        await searchIndex.ensureReady(() => (async function* () {
+            yield [makeRecord("30", { timestamp }), makeRecord("10", { timestamp }), makeRecord("20", { timestamp })];
+        })());
+        expect(searchIndex.search([], [], "DELETED", 10, false).page.map(entry => entry.id)).toEqual(["10", "20", "30"]);
+        searchIndex.removeIds(["20"]);
+        searchIndex.addRecords([makeRecord("15", { timestamp })]);
+        expect(searchIndex.search([], [], "DELETED", 10, true).page.map(entry => entry.id)).toEqual(["30", "15", "10"]);
+    });
+
+    it("notifies readiness changes and stops notifying after unsubscribe", async () => {
+        const states: boolean[] = [];
+        const unsubscribe = searchIndex.subscribeReady(() => states.push(searchIndex.isReady()));
+        searchIndex.clear();
+        await searchIndex.ensureReady(fixtureSource);
+        unsubscribe();
+        searchIndex.clear();
+
+        expect(states).toEqual([false, true]);
     });
 });

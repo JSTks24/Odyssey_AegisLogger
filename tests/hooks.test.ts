@@ -27,11 +27,11 @@ vi.mock("../db", () => ({
     }
 }));
 
-import hooks, { createPageLeases, type messagePageCursor,planNextPage, planPageRecords, resolveLoadPhase } from "../components/hooks";
+import hooks, { type messagePageCursor } from "../components/hooks";
 import idb, { DBMessageStatus } from "../db";
 import searchIndex from "../utils/searchIndex";
 
-const { loadMessagesPage } = hooks;
+const { loadMessagesPage, planNextPage, planPageRecords, resolveLoadPhase } = hooks;
 
 function makeRecord(id: string, status = DBMessageStatus.DELETED, content = "hello"): any {
     return {
@@ -58,18 +58,20 @@ beforeEach(() => {
 });
 
 describe("loadMessagesPage without query", () => {
-    it("hydrates the page exactly once and reports hasMore from the total", async () => {
+    it("returns the raw page without waiting for attachments or counting all matches", async () => {
         const records = [makeRecord("1"), makeRecord("2")];
         vi.mocked(idb.getDateStortedMessagesByStatusIDB).mockResolvedValue(records);
         vi.mocked(idb.countMessagesByStatusIDB).mockResolvedValue(5);
 
-        const result = await loadMessagesPage("", DBMessageStatus.DELETED, true, 0, 100);
+        const result = await loadMessagesPage("", DBMessageStatus.DELETED, true, 0, 1);
 
-        expect(result.records).toBe(records);
+        expect(result.records).toEqual([records[0]]);
+        expect(result.records[0]).toBe(records[0]);
         expect(result.hasMore).toBe(true);
         expect(idb.getDateStortedMessagesByStatusIDB).toHaveBeenCalledTimes(1);
-        expect(idb.hydrateRecords).toHaveBeenCalledTimes(1);
-        expect(vi.mocked(idb.hydrateRecords).mock.calls[0][0]).toBe(records);
+        expect(idb.hydrateRecords).not.toHaveBeenCalled();
+        expect(idb.countMessagesByStatusIDB).not.toHaveBeenCalled();
+        expect(idb.getDateStortedMessagesByStatusIDB).toHaveBeenCalledWith(true, 2, DBMessageStatus.DELETED, 0);
     });
 
     it("reports hasMore false when the offset consumed the remaining rows", async () => {
@@ -88,18 +90,19 @@ describe("loadMessagesPage without query", () => {
 
         const result = await loadMessagesPage("", DBMessageStatus.DELETED, true, 0, 100, () => true);
 
-        expect(result).toEqual({ records: [], statusTotal: 0, hasMore: false, nextOffset: 0, scope: null });
+        expect(result).toEqual({ records: [], hasMore: false, nextOffset: 0 });
         expect(idb.hydrateRecords).not.toHaveBeenCalled();
     });
 });
 
 describe("loadMessagesPage with the search index ready", () => {
-    beforeEach(() => {
+    beforeEach(async () => {
         const indexed = [makeRecord("10"), makeRecord("11"), makeRecord("12", DBMessageStatus.DELETED, "hello world")];
         vi.mocked(idb.iterateRawMessagesIDB).mockImplementation(() => (async function* () { yield indexed; })());
         vi.mocked(idb.getMessagesByIDsIDB).mockImplementation(async (ids: string[]) =>
             ids.map(id => indexed.find(record => record.message_id === id)).filter(Boolean)
         );
+        await searchIndex.ensureReady(() => idb.iterateRawMessagesIDB());
     });
 
     it("paginates via the index with hasMore until the last page", async () => {
@@ -107,7 +110,7 @@ describe("loadMessagesPage with the search index ready", () => {
 
         expect(first.records.map(record => record.message_id)).toEqual(["12", "11"]);
         expect(first.hasMore).toBe(true);
-        expect(idb.hydrateRecords).toHaveBeenCalledTimes(1);
+        expect(idb.hydrateRecords).not.toHaveBeenCalled();
 
         const second = await loadMessagesPage("hello", DBMessageStatus.DELETED, true, 2, 2);
 
@@ -131,7 +134,6 @@ describe("loadMessagesPage fallback scan", () => {
 
         expect(page1.records).toHaveLength(100);
         expect(page1.hasMore).toBe(true);
-        expect(page1.statusTotal).toBe(101);
         expect(page2.hasMore).toBe(true);
         expect(page3.hasMore).toBe(true);
         expect(page4.records).toHaveLength(1);
@@ -147,33 +149,18 @@ describe("loadMessagesPage fallback scan", () => {
 
         expect(result.records).toHaveLength(0);
         expect(result.hasMore).toBe(false);
-        expect(result.statusTotal).toBe(0);
     });
 });
-
-function makeScope(size = 1) {
-    const released: string[] = [];
-    const releasedRecords: string[][] = [];
-    const scope = {
-        hold: vi.fn(),
-        take: vi.fn(() => new Map()),
-        releaseRecords: vi.fn((messageIds: Iterable<string>) => { releasedRecords.push([...messageIds]); }),
-        release: () => { released.push("released"); },
-        size: () => size
-    };
-
-    return { scope, released, releasedRecords };
-}
 
 describe("loadMessagesPage with already displayed records", () => {
     it("never hydrates a record that is already displayed", async () => {
         vi.mocked(idb.getDateStortedMessagesByStatusIDB).mockResolvedValue([makeRecord("1"), makeRecord("2"), makeRecord("3")]);
         vi.mocked(idb.countMessagesByStatusIDB).mockResolvedValue(10);
 
-        const result = await loadMessagesPage("", DBMessageStatus.DELETED, true, 0, 3, undefined, new Set(["1", "2"]));
+        const result = await loadMessagesPage("", DBMessageStatus.DELETED, true, 0, 2, undefined, new Set(["1"]));
 
-        expect(result.records.map(record => record.message_id)).toEqual(["3"]);
-        expect(vi.mocked(idb.hydrateRecords).mock.calls[0][0].map((record: any) => record.message_id)).toEqual(["3"]);
+        expect(result.records.map(record => record.message_id)).toEqual(["2"]);
+        expect(idb.hydrateRecords).not.toHaveBeenCalled();
         expect(result.hasMore).toBe(true);
     });
 
@@ -192,9 +179,10 @@ describe("loadMessagesPage with already displayed records", () => {
         vi.mocked(idb.iterateRawMessagesIDB).mockImplementation(() => (async function* () { yield indexed; })());
         vi.mocked(idb.getMessagesByIDsIDB).mockImplementation(async (ids: string[]) => ids.map(id => makeRecord(id)));
 
+        await searchIndex.ensureReady(() => idb.iterateRawMessagesIDB());
         const result = await loadMessagesPage("hello", DBMessageStatus.DELETED, true, 0, 3, undefined, new Set(["12"]));
 
-        expect(vi.mocked(idb.hydrateRecords).mock.calls[0][0].map((record: any) => record.message_id)).toEqual(["11", "10"]);
+        expect(idb.hydrateRecords).not.toHaveBeenCalled();
         expect(result.records.map(record => record.message_id)).toEqual(["11", "10"]);
     });
 
@@ -230,7 +218,7 @@ async function walkFallbackPages(query: string, pageSize: number, pages: number)
         const target: number = cursor == null ? pageSize : cursor.numDisplayed + pageSize;
         const request = planNextPage(cursor, context, target);
         const result = await loadMessagesPage(query, DBMessageStatus.DELETED, false, request.offset, request.limit, undefined, request.knownIds);
-        const planned: { records: any[]; dropped: string[]; } = cursor == null ? { records: result.records, dropped: [] } : planPageRecords(cursor.records, result.records);
+        const planned: { records: any[]; } = cursor == null ? { records: result.records } : planPageRecords(cursor.records, result.records);
 
         results.push(result);
         loaded.push(...planned.records.map((record: any) => record.message_id));
@@ -285,7 +273,7 @@ describe("loadMessagesPage fallback pagination", () => {
         expect(page.records).toEqual([]);
         expect(page.hasMore).toBe(true);
         expect(page.nextOffset).toBe(300);
-        expect(vi.mocked(idb.hydrateRecords).mock.calls[0][0]).toEqual([]);
+        expect(idb.hydrateRecords).not.toHaveBeenCalled();
 
         const next = await loadMessagesPage("hello", DBMessageStatus.DELETED, false, page.nextOffset, 100, undefined, new Set(displayed));
 
@@ -302,7 +290,7 @@ describe("loadMessagesPage fallback pagination", () => {
         const overlapping = await loadMessagesPage("hello", DBMessageStatus.DELETED, false, 95, 100, undefined, knownIds);
 
         expect(overlapping.records.map(record => record.message_id)).toEqual(all.slice(110, 120).map(record => record.message_id));
-        expect(vi.mocked(idb.hydrateRecords).mock.calls[0][0].map((record: any) => record.message_id)).toEqual(all.slice(110, 120).map(record => record.message_id));
+        expect(idb.hydrateRecords).not.toHaveBeenCalled();
         expect(overlapping.nextOffset).toBe(120);
         expect(overlapping.hasMore).toBe(false);
     });
@@ -329,7 +317,7 @@ describe("loadMessagesPage fallback pagination", () => {
         vi.mocked(idb.getMessagesByIDsIDB).mockImplementation(async (ids: string[]) =>
             ids.map(id => all.find(record => record.message_id === id)).filter(Boolean) as any
         );
-        await loadMessagesPage("hello", DBMessageStatus.DELETED, false, 0, 1);
+        await searchIndex.ensureReady(() => idb.iterateRawMessagesIDB());
         const indexed = await loadMessagesPage("hello", DBMessageStatus.DELETED, false, 0, 40);
 
         vi.mocked(idb.getDateStortedMessagesByStatusIDB).mockResolvedValue(all);
@@ -387,7 +375,6 @@ describe("planPageRecords", () => {
 
         expect(planned.records.map(record => record.message_id)).toEqual(["1", "2", "3"]);
         expect(planned.records[1]).toBe(previous[1]);
-        expect(planned.dropped).toEqual(["2"]);
     });
 
     it("drops every incoming duplicate without touching the loaded pages", () => {
@@ -395,114 +382,15 @@ describe("planPageRecords", () => {
         const planned = planPageRecords(previous, [makeRecord("1"), makeRecord("2")]);
 
         expect(planned.records).toEqual(previous);
-        expect(planned.dropped).toEqual(["1", "2"]);
     });
 
-    it("hands the dropped records to the incoming page scope", () => {
-        const leases = createPageLeases();
-        const displayed = makeScope();
-        const incoming = makeScope(2);
-        const planned = planPageRecords([makeRecord("1"), makeRecord("2")], [makeRecord("2"), makeRecord("3")]);
-
-        leases.adopt(displayed.scope);
-        leases.adoptMore(incoming.scope, planned.dropped);
-
-        expect(incoming.releasedRecords).toEqual([["2"]]);
-        expect(leases.count()).toBe(2);
-        expect(leases.retire()).toEqual([]);
-    });
-});
-
-describe("createPageLeases", () => {
-    it("retires the previous page when a new result is adopted", () => {
-        const leases = createPageLeases();
-        const first = makeScope();
-        const second = makeScope();
-
-        leases.adopt(first.scope);
-        leases.adopt(second.scope);
-
-        expect(leases.count()).toBe(1);
-        expect(first.released).toEqual([]);
-
-        const retired = leases.retire();
-
-        expect(retired).toEqual([first.scope]);
-        expect(leases.retire()).toEqual([]);
-
-        for (const scope of retired) scope.release();
-
-        expect(first.released).toEqual(["released"]);
-        expect(second.released).toEqual([]);
-    });
-
-    it("keeps the loaded pages while loading more and releases only the dropped records", () => {
-        const leases = createPageLeases();
-        const first = makeScope();
-        const second = makeScope(1);
-
-        leases.adopt(first.scope);
-        leases.adoptMore(second.scope, ["dropped-1", "dropped-2"]);
-
-        expect(leases.count()).toBe(2);
-        expect(second.releasedRecords).toEqual([["dropped-1", "dropped-2"]]);
-        expect(leases.retire()).toEqual([]);
-    });
-
-    it("does not keep a scope that has nothing left to hold", () => {
-        const leases = createPageLeases();
-        const first = makeScope();
-
-        leases.adopt(first.scope);
-        leases.adoptMore(makeScope(0).scope, []);
-
-        expect(leases.count()).toBe(1);
-        expect(leases.retire()).toEqual([]);
-    });
-
-    it("ignores an empty load more result", () => {
-        const leases = createPageLeases();
-        const first = makeScope();
-
-        leases.adopt(first.scope);
-        leases.adoptMore(null, ["dropped"]);
-
-        expect(leases.count()).toBe(1);
-        expect(leases.retire()).toEqual([]);
-    });
-
-    it("retires the previous page when the new result carries no scope", () => {
-        const leases = createPageLeases();
-        const first = makeScope();
-
-        leases.adopt(first.scope);
-        leases.adopt(null);
-
-        expect(leases.count()).toBe(0);
-        expect(leases.retire()).toEqual([first.scope]);
-    });
-
-    it("releases every page and retired scope on unmount", () => {
-        const leases = createPageLeases();
-        const first = makeScope();
-        const second = makeScope();
-
-        leases.adopt(first.scope);
-        leases.adopt(second.scope);
-        leases.releaseAll();
-
-        expect(first.released).toEqual(["released"]);
-        expect(second.released).toEqual(["released"]);
-        expect(leases.count()).toBe(0);
-        expect(leases.retire()).toEqual([]);
-    });
 });
 
 describe("resolveLoadPhase", () => {
     it("names the reason of a pending load", () => {
-        expect(resolveLoadPhase(true, "", false)).toBe("more");
-        expect(resolveLoadPhase(false, "", true)).toBe("initial");
-        expect(resolveLoadPhase(false, "hello", false)).toBe("indexing");
-        expect(resolveLoadPhase(false, "hello", true)).toBe("searching");
+        expect(resolveLoadPhase(true, "")).toBe("more");
+        expect(resolveLoadPhase(false, "")).toBe("initial");
+        expect(resolveLoadPhase(false, "hello")).toBe("searching");
+        expect(resolveLoadPhase(false, "hello")).toBe("searching");
     });
 });

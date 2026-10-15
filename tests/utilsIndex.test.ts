@@ -185,10 +185,18 @@ describe("shouldIgnore", () => {
         expect(shouldIgnore({ channelId: "c1", authorId: "bot-1", bot: true })).toBe(true);
     });
 
-    it("keeps whitelisted bots when ignoreBots is on", () => {
+    it("ignores whitelisted bots when ignoreBots is on", () => {
         settings.store.ignoreBots = true;
         settings.store.whitelistedIds = "bot-1";
-        expect(shouldIgnore({ channelId: "c1", authorId: "bot-1", bot: true })).toBe(false);
+        expect(shouldIgnore({ channelId: "c1", authorId: "bot-1", bot: true })).toBe(true);
+    });
+
+    it.each(["", "bot-1", "dm-chan"])("ignores bot DMs and ghost pings with whitelist %s", whitelist => {
+        settings.store.ignoreBots = true;
+        settings.store.alwaysLogDirectMessages = true;
+        settings.store.whitelistedIds = whitelist;
+        ChannelStore.getChannel = () => ({ isDM: () => true });
+        expect(shouldIgnore({ channelId: "dm-chan", authorId: "bot-1", bot: true, ghostPinged: true })).toBe(true);
     });
 
     it("keeps ghost pinged messages even when content matches an exclusion rule", () => {

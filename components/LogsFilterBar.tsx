@@ -187,12 +187,15 @@ interface PanelItem {
 interface FilterBarProps {
     query: string;
     onChange: (query: string) => void;
+    onSubmit: (query: string) => void;
     placeholder: string;
     active: boolean;
 }
 
-export default function FilterBar({ query, onChange, placeholder, active }: FilterBarProps) {
+export default function FilterBar({ query, onChange, onSubmit, placeholder, active }: FilterBarProps) {
     const [panelOpen, setPanelOpen] = useState(false);
+    const panelOpenRef = useRef(false);
+    panelOpenRef.current = panelOpen;
     const [activeKind, setActiveKind] = useState<PickKind | null>(null);
     const [dateKind, setDateKind] = useState<"before" | "after">("before");
     const [dateValue, setDateValue] = useState("");
@@ -213,6 +216,11 @@ export default function FilterBar({ query, onChange, placeholder, active }: Filt
     queryRef.current = query;
     const onChangeRef = useRef(onChange);
     onChangeRef.current = onChange;
+    const onSubmitRef = useRef(onSubmit);
+    onSubmitRef.current = onSubmit;
+    const composingRef = useRef(false);
+    const [selectedToken, setSelectedToken] = useState<number | null>(null);
+    const selectedTokenRef = useRef<number | null>(null);
     const editRawRef = useRef<string | null>(null);
     const activeNegateRef = useRef(false);
     const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -226,24 +234,32 @@ export default function FilterBar({ query, onChange, placeholder, active }: Filt
 
     useEffect(() => {
         let cancelled = false;
-
-        searchIndex.ensureReady(() => idb.iterateRawMessagesIDB(2000))
-            .catch(() => null)
-            .then(() => {
-                if (cancelled) return null;
-                return idb.getDistinctLogEntities();
-            })
-            .then(entities => {
-                if (!cancelled) setLogged(entities ?? null);
-            })
-            .catch(() => {
-                if (!cancelled) setLogged(null);
+        let request = 0;
+        const refresh = () => {
+            const current = ++request;
+            if (!searchIndex.isReady()) {
+                setLogged(null);
+                return;
+            }
+            idb.getDistinctLogEntities().then(entities => {
+                if (!cancelled && current === request && searchIndex.isReady()) setLogged(entities);
+            }).catch(() => {
+                if (!cancelled && current === request) setLogged(null);
             });
+        };
+        const unsubscribe = searchIndex.subscribeReady(refresh);
+        refresh();
 
         return () => {
             cancelled = true;
+            unsubscribe();
         };
     }, []);
+
+    useEffect(() => {
+        selectedTokenRef.current = null;
+        setSelectedToken(null);
+    }, [query]);
 
     useEffect(() => {
         const input = areaRef.current?.querySelector("input");
@@ -270,8 +286,7 @@ export default function FilterBar({ query, onChange, placeholder, active }: Filt
                 cancelActivePick();
                 setCalendarOpen(false);
                 setPanelOpen(false);
-                setActiveKind(null);
-                activeKindRef.current = null;
+                changeKind(null);
             }, 150);
         };
         const handleKeyDown = (e: KeyboardEvent) => {
@@ -279,15 +294,52 @@ export default function FilterBar({ query, onChange, placeholder, active }: Filt
             const inArea = target != null && area.contains(target);
             const inPanel = target != null && panelRef.current?.contains(target);
             if (!inArea && !inPanel) return;
+            if (e.isComposing || e.keyCode === 229 || composingRef.current) return;
+
+            const token = target?.closest<HTMLElement>("[data-token-index]");
+            if (token != null && (e.key === "Enter" || e.key === " ")) {
+                e.preventDefault();
+                e.stopPropagation();
+                token.click();
+                return;
+            }
+
+            if (e.key === "Backspace" || e.key === "Delete") {
+                const selected = token != null ? Number(token.dataset.tokenIndex) : selectedTokenRef.current;
+                if (selected != null) {
+                    e.preventDefault();
+                    const next = searchBox.removeTokenAt(queryRef.current, selected);
+                    selectedTokenRef.current = null;
+                    setSelectedToken(null);
+                    onChangeRef.current(next);
+                    boxRef.current?.querySelector("input")?.focus();
+                    return;
+                }
+                const input = target as HTMLInputElement;
+                if (e.key !== "Backspace" || input.tagName !== "INPUT" || input.value !== "" || input.selectionStart !== 0) return;
+                const kind = activeKindRef.current;
+                const split = kind != null ? searchBox.splitActiveToken(queryRef.current, kind) : null;
+                const leading = searchBox.splitLeadingTokens(queryRef.current);
+                if (split != null) {
+                    e.preventDefault();
+                    onChangeRef.current(split.head.trimEnd());
+                    changeKind(null);
+                } else if (leading.tokens.length > 0) {
+                    e.preventDefault();
+                    onChangeRef.current(searchBox.removeTokenAt(queryRef.current, leading.tokens.length - 1));
+                }
+                return;
+            }
 
             if (e.key === "Escape") {
+                if (!panelOpenRef.current) return;
+                e.preventDefault();
+                e.stopPropagation();
                 if (dateTypeRef.current) {
-                    e.preventDefault();
                     setDateTypeOpen(false);
                     setHighlightIndex(-1);
                     highlightRef.current = -1;
                 } else if (activeKind != null) {
-                    e.preventDefault();
                     cancelActivePick();
                     changeKind(null);
                 } else {
@@ -296,10 +348,27 @@ export default function FilterBar({ query, onChange, placeholder, active }: Filt
                 return;
             }
 
-            if (activeKind === "date" && !dateTypeRef.current) return;
+            const items = panelOpenRef.current ? itemsRef.current : [];
+            if (e.key === "Enter") {
+                if (!inArea && items.length === 0) return;
+                e.preventDefault();
+                e.stopPropagation();
+                const item = items[highlightRef.current];
+                if (item != null) {
+                    item.action();
+                    return;
+                }
+                const value = searchBox.prepareSubmission(queryRef.current);
+                if (value !== queryRef.current) onChangeRef.current(value);
+                if (closeTimer.current != null) clearTimeout(closeTimer.current);
+                editRawRef.current = null;
+                changeKind(null);
+                setPanelOpen(false);
+                onSubmitRef.current(value);
+                return;
+            }
 
-            const items = itemsRef.current;
-            if (!items.length) return;
+            if (!items.length || (activeKind === "date" && !dateTypeRef.current)) return;
 
             if (e.key === "ArrowDown") {
                 e.preventDefault();
@@ -308,13 +377,9 @@ export default function FilterBar({ query, onChange, placeholder, active }: Filt
                 setHighlightIndex(next);
             } else if (e.key === "ArrowUp") {
                 e.preventDefault();
-                const next = (highlightRef.current - 1 + items.length) % items.length;
+                const next = highlightRef.current < 0 ? items.length - 1 : (highlightRef.current - 1 + items.length) % items.length;
                 highlightRef.current = next;
                 setHighlightIndex(next);
-            } else if (e.key === "Enter") {
-                if (highlightRef.current < 0) return;
-                e.preventDefault();
-                items[highlightRef.current]?.action();
             }
         };
 
@@ -326,6 +391,7 @@ export default function FilterBar({ query, onChange, placeholder, active }: Filt
             area.removeEventListener("focusin", handleFocus);
             area.removeEventListener("focusout", handleBlur);
             document.removeEventListener("keydown", handleKeyDown);
+            if (closeTimer.current != null) clearTimeout(closeTimer.current);
         };
     }, [activeKind]);
 
@@ -355,8 +421,10 @@ export default function FilterBar({ query, onChange, placeholder, active }: Filt
         };
     }, [panelOpen]);
 
-    const applyToken = (kind: FilterKind, value: string, negate = false) =>
+    const applyToken = (kind: FilterKind, value: string, negate = false) => {
         onChange(upsertQueryToken(query, kind, `${negate ? "!" : ""}${kind}:${value}`, negate, kind === "has"));
+        changeKind(null);
+    };
 
     const cancelActivePick = () => {
         const kind = activeKindRef.current;
@@ -474,9 +542,15 @@ export default function FilterBar({ query, onChange, placeholder, active }: Filt
     const activeSplit = isEntity ? searchBox.splitActiveToken(query, activeKind!) : null;
     const { tokens, rest } = searchBox.splitLeadingTokens(activeSplit != null ? activeSplit.head : query);
     const boxRest = activeSplit != null ? activeSplit.rest : rest;
-    const setRest = (value: string) => onChange(activeSplit != null
-        ? activeSplit.head + activeSplit.prefix + value
-        : searchBox.composeSearchBox(tokens, value));
+    const setRest = (value: string) => {
+        highlightRef.current = -1;
+        setHighlightIndex(-1);
+        selectedTokenRef.current = null;
+        setSelectedToken(null);
+        onChange(activeSplit != null
+            ? activeSplit.head + activeSplit.prefix + value
+            : searchBox.composeSearchBox(tokens, value));
+    };
     const filterText = activeSplit != null ? activeSplit.rest : "";
     const candidates = useMemo(
         () => (filterText.trim() ? matchCandidates(filterText, pool, 8) : pool.slice(0, 8)),
@@ -625,22 +699,30 @@ export default function FilterBar({ query, onChange, placeholder, active }: Filt
                     return (
                         <span
                             key={`${i}-${seg}`}
-                            className={cl("search-token") + (editable ? " " + cl("search-token-editable") : "")}
+                            className={cl("search-token") + (editable ? " " + cl("search-token-editable") : "") + (selectedToken === i ? " " + cl("search-token-selected") : "")}
+                            role="button"
+                            tabIndex={0}
+                            data-token-index={i}
+                            aria-pressed={selectedToken === i}
+                            onFocus={() => {
+                                selectedTokenRef.current = i;
+                                setSelectedToken(i);
+                            }}
+                            onClick={() => {
+                                if (editable && kind) {
+                                    selectedTokenRef.current = null;
+                                    setSelectedToken(null);
+                                    editToken(kind, parsed);
+                                } else {
+                                    selectedTokenRef.current = i;
+                                    setSelectedToken(i);
+                                }
+                            }}
                         >
-                            <span
-                                className={cl("search-token-body")}
-                                onClick={() => editable && kind && editToken(kind, parsed)}
-                            >
+                            <span className={cl("search-token-body")}>
                                 <b>{chipLabel(parsed.key, parsed.negate)}:</b>
                                 <span>{chipValue(parsed)}</span>
                             </span>
-                            <button
-                                type="button"
-                                className={cl("search-token-remove")}
-                                onClick={() => onChange(removeQueryToken(query, parsed.raw))}
-                            >
-                                ×
-                            </button>
                         </span>
                     );
                 })}
@@ -654,17 +736,11 @@ export default function FilterBar({ query, onChange, placeholder, active }: Filt
                     value={boxRest}
                     placeholder={tokens.length === 0 && activeSplit == null ? placeholder : ""}
                     onChange={e => setRest(e.currentTarget.value)}
-                    onKeyDown={e => {
-                        const input = e.currentTarget;
-                        if (e.key !== "Backspace" || input.value !== "" || input.selectionStart !== 0) return;
-                        if (activeSplit != null) {
-                            e.preventDefault();
-                            onChange(activeSplit.head.trimEnd());
-                            changeKind(null);
-                        } else if (tokens.length > 0) {
-                            e.preventDefault();
-                            onChange(searchBox.composeSearchBox(tokens.slice(0, -1), ""));
-                        }
+                    onCompositionStart={() => { composingRef.current = true; }}
+                    onCompositionEnd={() => { composingRef.current = false; }}
+                    onClick={() => {
+                        selectedTokenRef.current = null;
+                        setSelectedToken(null);
                     }}
                 />
             </div>

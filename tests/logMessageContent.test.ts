@@ -116,6 +116,8 @@ function snapshotAttachment(attachment: any) {
     const body = tree.props.children[0];
     const bodyTree = body.type(body.props);
     const attachments = bodyTree.props.children[2];
+    mocks.cursor = 0;
+    mocks.state = [];
     return attachments.props.children[0][0];
 }
 
@@ -181,11 +183,16 @@ describe("log message content", () => {
     });
 
     it("shows archived edit text, embed summaries and the hydrated historical attachment URL", () => {
-        const rendered = renderContent(record({
+        const source = record({
             attachments: [{ id: "a1", filename: "removed.png", url: "blob:archived#", deleted: true }],
             embeds: [{ title: "embed title", description: "embed body", url: "https://example.test", fields: [{ name: "field", value: "field value" }] }],
             editHistory: [{ timestamp: "2026-10-08T00:59:00Z", content: "previous body", attachments: [{ id: "a1", filename: "removed.png", url: "https://expired.test/removed.png" }] }]
-        }));
+        });
+        const initial = content.MessageSnapshot({ record: source });
+        expect(textContent(initial)).not.toContain("previous body");
+        nodes(initial, "details")[0].props.onToggle({ currentTarget: { open: true } });
+        mocks.cursor = 0;
+        const rendered = renderTree(content.MessageSnapshot({ record: source }));
         expect(textContent(rendered)).toContain("previous body");
         expect(textContent(rendered)).toContain("embed title\nembed body\nhttps://example.test\nfield\nfield value");
         expect(nodes(rendered, "details")).toHaveLength(1);
@@ -197,6 +204,18 @@ describe("log message content", () => {
         const rendered = renderContent(record({ content: "", attachments: null, embeds: null, editHistory: null }));
         expect(textContent(rendered)).toContain("modal.snapshot.empty");
         expect(content.prepareMessage(record({ attachments: [null], editHistory: null })).message).not.toBeNull();
+    });
+
+    it("shows text and sized placeholders without starting attachment reads before the row is visible", () => {
+        mocks.effect.mockImplementation(effect => effect());
+        const source = record({ attachments: [{ id: "a1", filename: "slow.png", width: 640, height: 480, path: "a1.png", url: "https://expired.test/a1" }] });
+        const rendered = renderContent(source, { attachmentsPending: true });
+        expect(textContent(rendered)).toContain("archived message body");
+        expect(nodes(rendered, "img")).toHaveLength(0);
+        expect(nodes(rendered).some(node => node.props["aria-busy"] === "true")).toBe(true);
+        expect(mocks.acquire).not.toHaveBeenCalled();
+        expect(content.prepareMessage(source, true).message!.attachments).toEqual([]);
+        expect(source.attachments).toHaveLength(1);
     });
 
     it("does not call a removed-attachment message empty when the separate removed block owns its preview", () => {

@@ -4,6 +4,9 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
+import { readFileSync } from "node:fs";
+
+import ts from "typescript";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../index", () => ({
@@ -29,7 +32,8 @@ import {
     registerBlobUrlReleaser,
     resetAttachmentBlobCacheForTests,
     setAttachmentBlobCacheBudget,
-    settleAttachmentCache
+    settleAttachmentCache,
+    videoPoster
 } from "../utils/saveImage";
 import { getImage } from "../utils/saveImage/ImageManager";
 
@@ -54,7 +58,105 @@ beforeEach(() => {
     vi.mocked(getImage).mockResolvedValue(new Uint8Array([1, 2, 3]));
 });
 
+describe("shared attachment read queue", () => {
+    it("bounds actual reads across independent callers while sharing duplicate requests", async () => {
+        const completions = new Map<string, () => void>();
+        let active = 0;
+        let peak = 0;
+        vi.mocked(getImage).mockImplementation(id => new Promise(resolve => {
+            active++;
+            peak = Math.max(active, peak);
+            completions.set(id, () => {
+                active--;
+                resolve(new Uint8Array([1]));
+            });
+        }));
+        const requests = Array.from({ length: 24 }, (_, index) => acquireAttachmentBlobUrl(makeAttachment(`queued-${index}`)));
+        const duplicate = acquireAttachmentBlobUrl(makeAttachment("queued-0"));
+
+        expect(getImage).toHaveBeenCalledTimes(8);
+        for (let start = 0; start < 24; start += 8) {
+            await vi.waitFor(() => expect(getImage).toHaveBeenCalledTimes(start + 8));
+            for (let index = start; index < start + 8; index++) completions.get(`queued-${index}`)!();
+        }
+        const leases = await Promise.all([...requests, duplicate]);
+
+        expect(peak).toBe(8);
+        expect(getImage).toHaveBeenCalledTimes(24);
+        expect(leases[0]?.url).toBe(leases[24]?.url);
+        leases.forEach(lease => lease?.release());
+    });
+
+    it("cancels queued reads from an old generation without touching storage", async () => {
+        const completions: (() => void)[] = [];
+        vi.mocked(getImage).mockImplementation(() => new Promise(resolve => {
+            completions.push(() => resolve(new Uint8Array([1])));
+        }));
+        const requests = Array.from({ length: 12 }, (_, index) => acquireAttachmentBlobUrl(makeAttachment(`cancel-${index}`)));
+
+        expect(getImage).toHaveBeenCalledTimes(8);
+        clearAttachmentBlobCache();
+        expect(await Promise.all(requests.slice(8))).toEqual([null, null, null, null]);
+        expect(getImage).toHaveBeenCalledTimes(8);
+        completions.forEach(complete => complete());
+        expect(await Promise.all(requests.slice(0, 8))).toEqual(Array(8).fill(null));
+    });
+
+    it("releases read slots after storage rejection", async () => {
+        vi.mocked(getImage).mockRejectedValue(new Error("read failed"));
+
+        const results = await Promise.allSettled(Array.from({ length: 20 }, (_, index) => acquireAttachmentBlobUrl(makeAttachment(`failed-${index}`))));
+
+        expect(results.every(result => result.status === "rejected")).toBe(true);
+        expect(getImage).toHaveBeenCalledTimes(20);
+        expect(getAttachmentBlobStats().inflight).toBe(0);
+    });
+});
+
 describe("acquireAttachmentBlobUrl", () => {
+    it("applies the plugin patch to the native poster assignment without changing the video source", async () => {
+        const source = ts.createSourceFile("index.tsx", readFileSync(new URL("../index.tsx", import.meta.url), "utf8"), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+        let replacement: ts.ObjectLiteralExpression | undefined;
+        const visit = (node: ts.Node) => {
+            if (ts.isObjectLiteralExpression(node)) {
+                const marker = node.properties.find(property => ts.isPropertyAssignment(property) && property.name.getText(source) === "find") as ts.PropertyAssignment | undefined;
+                if (marker?.initializer.getText(source).startsWith("/poster:")) {
+                    replacement = (node.properties.find(property => ts.isPropertyAssignment(property) && property.name.getText(source) === "replacement") as ts.PropertyAssignment).initializer as ts.ObjectLiteralExpression;
+                }
+            }
+            ts.forEachChild(node, visit);
+        };
+        visit(source);
+        expect(replacement).toBeDefined();
+        const properties = replacement!.properties as ts.NodeArray<ts.PropertyAssignment>;
+        const expression = properties.find(property => property.name.getText(source) === "match")!.initializer.getText(source);
+        const match = new RegExp(expression.slice(1, expression.lastIndexOf("/")).replaceAll("\\i", "[\\w$]+"));
+        const value = (properties.find(property => property.name.getText(source) === "replace")!.initializer as ts.StringLiteral).text;
+        const nativeAssignment = "({src:e.src,poster:n.toString(),alt:e.item.originalItem.description})";
+        const patched = nativeAssignment.replace(match, value);
+        expect(patched).not.toBe(nativeAssignment);
+        const render = new Function("$self", "e", "n", `return ${patched}`);
+        const lease = await acquireAttachmentBlobUrl(makeAttachment("native-video", { content_type: "video/mp4", fileExtension: ".mp4" }));
+        const props = { src: lease!.url, item: { originalItem: { description: "clip" } } };
+        const result = render({ imageUtils: { videoPoster } }, props, { toString: () => `${lease!.url}?format=webp` });
+        expect(result).toEqual({ src: lease!.url, poster: undefined, alt: "clip" });
+        lease!.release();
+    });
+
+    it("omits managed video resources as posters while preserving images and unknown remote posters", async () => {
+        const video = await acquireAttachmentBlobUrl(makeAttachment("video", { content_type: "video/mp4", fileExtension: ".mp4" }));
+        const image = await acquireAttachmentBlobUrl(makeAttachment("image", { content_type: "image/png" }));
+        const legacy = await acquireAttachmentBlobUrl(makeAttachment("legacy", { filename: "clip.webm", fileExtension: ".webm" }));
+        expect(videoPoster(`${video!.url}?format=webp#`)).toBeUndefined();
+        expect(videoPoster(displayAttachmentUrl(legacy!.url))).toBeUndefined();
+        expect(videoPoster(displayAttachmentUrl(image!.url))).toBe(displayAttachmentUrl(image!.url));
+        expect(videoPoster("https://cdn.example/poster.png")).toBe("https://cdn.example/poster.png");
+        expect(videoPoster("blob:unknown")).toBe("blob:unknown");
+        video!.release();
+        image!.release();
+        legacy!.release();
+    });
+
     it("serves the same resource for the same attachment whatever its display url is", async () => {
         const first = await acquireAttachmentBlobUrl(makeAttachment("a1", { url: "https://cdn/a.png", proxy_url: "https://proxy/a.png" }));
         const second = await acquireAttachmentBlobUrl(makeAttachment("a1", { url: "https://cdn/other.png", proxy_url: "https://proxy/other.png" }));

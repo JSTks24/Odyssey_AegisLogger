@@ -7,6 +7,7 @@
 import idb, { DBMessageRecord, DBMessageStatus } from "../db";
 import { DEFAULT_IMAGE_CACHE_DIR } from "./constants";
 import { getMessageStatus } from "./index";
+import { refreshImageIndex } from "./saveImage/ImageManager";
 
 const LEGACY_DB_NAME = "MessageLoggerIDB";
 const LEGACY_IMAGE_DB_NAME = "MessageLoggerImageData";
@@ -185,13 +186,15 @@ export async function migrateLegacyImages(): Promise<number> {
 
                 const writeTx = targetDb.transaction(IMAGE_STORE_NAME, "readwrite");
                 await new Promise<void>((resolve, reject) => {
-                    const request = writeTx.objectStore(IMAGE_STORE_NAME).put(value, newKey);
-                    request.onsuccess = () => resolve();
-                    request.onerror = () => reject(request.error);
+                    writeTx.objectStore(IMAGE_STORE_NAME).put(value, newKey);
+                    writeTx.oncomplete = () => resolve();
+                    writeTx.onerror = () => reject(writeTx.error);
+                    writeTx.onabort = () => reject(writeTx.error);
                 });
                 migrated++;
             }
 
+            await refreshImageIndex();
             return migrated;
         } finally {
             targetDb.close();

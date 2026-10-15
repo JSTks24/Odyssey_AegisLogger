@@ -150,3 +150,20 @@ describe("composeSearchBox round trip", () => {
         expect(searchBox.splitLeadingTokens(searchBox.composeSearchBox(tokens.slice(0, -1), "")).tokens).toEqual(["user:123"]);
     });
 });
+
+describe("token deletion and submission", () => {
+    it("removes only the selected token and preserves the query text", () => {
+        expect(searchBox.removeTokenAt("has:image !user:123 message:456 hello  world", 1)).toBe("has:image message:456 hello  world");
+        expect(searchBox.removeTokenAt("has:image has:image", 0)).toBe("has:image");
+        expect(searchBox.removeTokenAt("hello has:image", 0)).toBe("hello has:image");
+        expect(searchBox.removeTokenAt("has:image", -1)).toBe("has:image");
+        expect(searchBox.removeTokenAt("has:image", 1)).toBe("has:image");
+    });
+
+    it("drops empty filter prefixes while retaining completed filters and free text", () => {
+        expect(searchBox.prepareSubmission("has:image user:")).toBe("has:image");
+        expect(searchBox.prepareSubmission("!channel: user:alice hello  world ")).toBe("user:alice hello  world");
+        expect(searchBox.prepareSubmission("url: custom:")).toBe("url: custom:");
+        expect(searchBox.prepareSubmission(" user: ")).toBe("");
+    });
+});

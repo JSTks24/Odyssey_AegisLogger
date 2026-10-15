@@ -62,37 +62,44 @@ interface Props {
 
 function LogsModal({ modalProps, initalQuery }: Props) {
     const [currentTab, setCurrentTab] = useState(LogTabs.DELETED);
-    const [queryEh, setQuery] = useState(initalQuery ?? "");
+    const [draftQuery, setDraftQuery] = useState(initalQuery ?? "");
+    const [submittedQuery, setSubmittedQuery] = useState(initalQuery ?? "");
     const [sortNewest, setSortNewest] = useState(settings.store.sortNewest);
     const [numDisplayedMessages, setNumDisplayedMessages] = useState(settings.store.messagesToDisplayAtOnceInLogs);
     const contentRef = useRef<HTMLDivElement | null>(null);
 
-    const { messages, total, hasMore, pending, phase, error, reset, retry } = hooks.useMessages(queryEh, currentTab, sortNewest, numDisplayedMessages);
+    const { messages, total, hasMore, pending, phase, error, reset, retry } = hooks.useMessages(submittedQuery, currentTab, sortNewest, numDisplayedMessages);
     const active = modalProps.transitionState === 1;
     const initialPageSize = settings.store.messagesToDisplayAtOnceInLogs;
-    const handleQueryChange = React.useCallback((value: string) => {
-        setQuery(value);
+    const submitQuery = React.useCallback((value: string) => {
+        setDraftQuery(value);
+        setSubmittedQuery(value);
         setNumDisplayedMessages(initialPageSize);
+        contentRef.current?.firstElementChild?.scrollTo(0, 0);
     }, [initialPageSize]);
     const addQueryToken = React.useCallback((token: string) => {
-        setQuery(q => (q + " " + token).trim());
-        setNumDisplayedMessages(initialPageSize);
-    }, [initialPageSize]);
+        submitQuery((submittedQuery + " " + token).trim());
+    }, [submittedQuery, submitQuery]);
     const handleLoadMore = React.useCallback(
         () => setNumDisplayedMessages(e => e + settings.store.messagesToDisplayAtOnceInLogs),
         []
     );
 
     useEffect(() => {
-        searchIndex.ensureReady(() => idb.iterateRawMessagesIDB(2000)).catch(error => console.error("[AegisLogger] search index build failed", error));
-    }, []);
+        if (pending || error != null || searchIndex.isReady()) return;
+        const timer = setTimeout(() => {
+            searchIndex.ensureReady(() => idb.iterateRawMessagesIDB(2000)).catch(() => { });
+        }, 100);
+        return () => clearTimeout(timer);
+    }, [pending, error]);
 
     return (
         <ModalRoot className={cl("root")} {...modalProps} size={ModalSize.LARGE}>
             <ModalHeader className={cl("header")}>
                 <FilterBar
-                    query={queryEh}
-                    onChange={handleQueryChange}
+                    query={draftQuery}
+                    onChange={setDraftQuery}
+                    onSubmit={submitQuery}
                     placeholder={t("modal.placeholder")}
                     active={active}
                 />
@@ -129,7 +136,6 @@ function LogsModal({ modalProps, initalQuery }: Props) {
             </ModalHeader>
             <div style={{ opacity: modalProps.transitionState === 1 ? "1" : "0" }} className={cl("content-container")} ref={contentRef}>
                 {
-                    modalProps.transitionState === 1 &&
                     <ModalContent
                         className={cl("content")}
                     >
@@ -139,7 +145,7 @@ function LogsModal({ modalProps, initalQuery }: Props) {
 
                         {error == null && total === 0 && (
                             <EmptyLogs
-                                hasQuery={queryEh.length !== 0}
+                                hasQuery={submittedQuery.length !== 0}
                                 reset={reset}
                             />
                         )}
@@ -155,16 +161,17 @@ function LogsModal({ modalProps, initalQuery }: Props) {
                             </div>
                         )}
 
-                        {error == null && (phase === "searching" || phase === "indexing") && (
+                        {error == null && phase === "searching" && (
                             <div className={cl("search-status")}>
-                                {t(phase === "indexing" ? "modal.loading.indexing" : "modal.loading.searching")}
+                                {t("modal.loading.searching")}
                             </div>
                         )}
 
                         {error == null && total !== 0 && (messages.length > 0 || !pending) && (
                             <LogsContentMemo
                                 visibleMessages={messages}
-                                canLoadMore={hasMore && messages.length >= settings.store.messagesToDisplayAtOnceInLogs}
+                                canLoadMore={hasMore}
+                                active={active}
                                 pending={pending}
                                 phase={phase}
                                 tab={currentTab}
@@ -217,6 +224,7 @@ function LogsModal({ modalProps, initalQuery }: Props) {
 }
 
 interface LogContentProps {
+    active: boolean;
     sortNewest: boolean;
     tab: LogTabs;
     visibleMessages: DBMessageRecord[];
@@ -228,7 +236,7 @@ interface LogContentProps {
     handleLoadMore: () => void;
 }
 
-function LogsContent({ visibleMessages, canLoadMore, pending, phase, sortNewest, tab, reset, addQueryToken, handleLoadMore }: LogContentProps) {
+function LogsContent({ visibleMessages, canLoadMore, active, pending, phase, sortNewest, tab, reset, addQueryToken, handleLoadMore }: LogContentProps) {
     const sentinelRef = useRef<HTMLDivElement | null>(null);
     const fetchingRef = useRef(false);
 
@@ -238,7 +246,7 @@ function LogsContent({ visibleMessages, canLoadMore, pending, phase, sortNewest,
 
     useEffect(() => {
         const el = sentinelRef.current;
-        if (!el) return;
+        if (!el || !active || pending) return;
 
         const observer = new IntersectionObserver(entries => {
             if (entries[0].isIntersecting && canLoadMore && !fetchingRef.current) {
@@ -249,7 +257,7 @@ function LogsContent({ visibleMessages, canLoadMore, pending, phase, sortNewest,
 
         observer.observe(el);
         return () => observer.disconnect();
-    }, [canLoadMore, handleLoadMore]);
+    }, [active, pending, canLoadMore, handleLoadMore]);
 
     if (visibleMessages.length === 0)
         return <NoResults tab={tab} />;
@@ -257,12 +265,12 @@ function LogsContent({ visibleMessages, canLoadMore, pending, phase, sortNewest,
     return (
         <div className={cl("content-inner")}>
             {visibleMessages
-                .map(({ message }, i) => (
+                .map((record, i) => (
                     <LMessageMemo
-                        key={message.id}
-                        message={message}
+                        key={record.message_id}
+                        record={record}
                         reset={reset}
-                        isGroupStart={isGroupStart(message, visibleMessages[i - 1]?.message, sortNewest)}
+                        isGroupStart={isGroupStart(record.message, visibleMessages[i - 1]?.message, sortNewest)}
                         addQueryToken={addQueryToken}
                     />
                 ))}
@@ -347,7 +355,7 @@ function EmptyLogs({ hasQuery, reset: forceUpdate }: { hasQuery: boolean; reset:
 }
 
 interface LMessageProps {
-    message: LoggedMessageJSON;
+    record: DBMessageRecord;
     isGroupStart: boolean,
     reset: () => void;
     addQueryToken: (token: string) => void;
@@ -360,11 +368,13 @@ function formatLogDate(value: string | Date | undefined | null) {
     return date.toLocaleString(undefined, { year: "numeric", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
 }
 
-function LMessage({ message: record, isGroupStart, reset, addQueryToken }: LMessageProps) {
+function LMessage({ record: source, isGroupStart, reset, addQueryToken }: LMessageProps) {
+    const display = hooks.useVisibleRecord(source);
+    const record = display.record.message;
     const modules = useLazyModules();
     const { message: converted, removedAttachments } = useMemo(
-        () => logMessageContent.prepareMessage(record),
-        [record, modules.version]
+        () => logMessageContent.prepareMessage(record, display.attachmentsPending),
+        [record, display.attachmentsPending, modules.version]
     );
     const message = converted ?? record;
     const author = message.author ?? { id: "", username: t("modal.snapshot.unknownAuthor") };
@@ -396,6 +406,8 @@ function LMessage({ message: record, isGroupStart, reset, addQueryToken }: LMess
 
     return (
         <div
+            ref={display.ref}
+            data-message-id={record.id}
             onContextMenu={e => {
                 ContextMenuApi.openContextMenu(e, () =>
                     <Menu.Menu
@@ -546,13 +558,14 @@ function LMessage({ message: record, isGroupStart, reset, addQueryToken }: LMess
                 modules={modules}
                 channel={channel}
                 isGroupStart={isGroupStart}
+                attachmentsPending={display.attachmentsPending}
             />
             {converted != null && modules.messagePreview != null && removedAttachments.length > 0 && (
                 <div className={cl("removed-attachments")}>
                     <div className={cl("removed-label")}>{t("modal.attachmentRemoved")}</div>
                     <div className={cl("removed-row")}>
                         {removedAttachments.map(attachment => (
-                            <RemovedAttachment key={attachment.id} attachment={attachment} />
+                            <RemovedAttachment key={`${attachment.id}:${attachment.url}`} attachment={attachment} />
                         ))}
                     </div>
                 </div>

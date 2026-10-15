@@ -101,11 +101,24 @@ async function processMessageFetch(response: FetchMessagesResponse) {
         const usable: DBMessageRecord[] = [];
         const stale: string[] = [];
         const responseContext = response.body.find(message => message.channel_id === firstMessage.channel_id && (message.guild_id || message.guildId));
+        const responseAuthors = new Map(response.body.map(message => [message.author.id, message.author]));
 
         for (const record of hydrated.records) {
-            const fallback = responseContext?.channel_id === record.channel_id ? responseContext : undefined;
-            if (messageChanges.changedSince(record.message_id, epoch) || !loggingScope.allowsMessage(record.message, fallback)) stale.push(record.message_id);
-            else usable.push({
+            const fallback = {
+                guildId: responseContext?.channel_id === record.channel_id ? responseContext.guild_id || responseContext.guildId : undefined,
+                author: responseAuthors.get(record.message.author.id)
+            };
+            if (messageChanges.changedSince(record.message_id, epoch)) {
+                stale.push(record.message_id);
+                continue;
+            }
+            if (!loggingScope.allowsMessage(record.message, fallback)) {
+                stale.push(record.message_id);
+                chatMessages.invalidate([record.message_id]);
+                idb.cachedMessages.delete(record.message_id);
+                continue;
+            }
+            usable.push({
                 ...record,
                 message: { ...record.message, guildId: loggingScope.guildId(loggingScope.context(record.message, fallback)) }
             });
@@ -139,7 +152,7 @@ async function processMessageFetch(response: FetchMessagesResponse) {
 
         if (!pluginRuntime.isCurrent(generation)) return;
 
-        const fetchUser = (id: string) => UserStore.getUser(id) || response.body.find(e => e.author.id === id);
+        const fetchUser = (id: string) => UserStore.getUser(id) || responseAuthors.get(id);
 
         for (let i = 0, len = usable.length; i < len; i++) {
             const record = usable[i];
@@ -172,14 +185,14 @@ function start() {
 
     if (originalGetMessage == null) originalGetMessage = MessageStore.getMessage;
     MessageStore.getMessage = (channelId: string, messageId: string) => {
+        const latestMessage = originalGetMessage!(channelId, messageId);
         const cached = chatMessages.get(messageId)?.message ?? idb.cachedMessages.get(messageId);
-        if (!cached || !loggingScope.allowsMessage(cached))
-            return originalGetMessage!(channelId, messageId);
+        if (!cached || !loggingScope.allowsMessage(cached, latestMessage))
+            return latestMessage;
 
         if (cached.deleted)
             return messageJsonToMessageClass({ message: cached });
 
-        const latestMessage = originalGetMessage!(channelId, messageId);
         return messageJsonToMessageClass({
             message: {
                 ...cached,

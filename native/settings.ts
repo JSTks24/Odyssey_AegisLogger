@@ -4,6 +4,8 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
+import { randomUUID } from "node:crypto";
+
 import { DATA_DIR } from "@main/utils/constants";
 import fs from "fs/promises";
 import path from "path";
@@ -20,7 +22,7 @@ const SETTINGS_FILE = "settings.json";
 const LEGACY_DATA_DIR_NAME = "MessageLoggerData";
 const LEGACY_SETTINGS_FILE = "mlSettings.json";
 
-let migrated = false;
+let migration: Promise<void> | null = null;
 
 async function pathExists(p: string) {
     try {
@@ -32,9 +34,6 @@ async function pathExists(p: string) {
 }
 
 async function migrateLegacyData() {
-    if (migrated) return;
-    migrated = true;
-
     try {
         const newDir = await getDefaultNativeDataDir();
         const legacyDir = path.join(DATA_DIR, LEGACY_DATA_DIR_NAME);
@@ -59,7 +58,7 @@ async function migrateLegacyData() {
 }
 
 export async function getSettings(): Promise<MLSettings> {
-    await migrateLegacyData();
+    await (migration ??= migrateLegacyData());
 
     try {
         const settings = await fs.readFile(await getSettingsFilePath(), "utf8");
@@ -79,7 +78,14 @@ export async function getSettings(): Promise<MLSettings> {
 
 export async function saveSettings(settings: MLSettings) {
     if (!settings) return;
-    await fs.writeFile(await getSettingsFilePath(), JSON.stringify(settings, null, 4), "utf8");
+    const target = await getSettingsFilePath();
+    const temporary = `${target}.${randomUUID()}.tmp`;
+    try {
+        await fs.writeFile(temporary, JSON.stringify(settings, null, 4), "utf8");
+        await fs.rename(temporary, target);
+    } finally {
+        await fs.unlink(temporary).catch(() => { });
+    }
 }
 
 async function getSettingsFilePath() {

@@ -61,12 +61,24 @@ function cancelPick(query: string, kind: string, editRaw: string | null) {
     return restored === query ? query : restored;
 }
 
+function removeTokenAt(query: string, index: number) {
+    const { tokens, rest } = splitLeadingTokens(query);
+    if (index < 0 || index >= tokens.length) return query;
+    return composeSearchBox(tokens.filter((_token, position) => position !== index), rest).trim();
+}
+
+function prepareSubmission(query: string) {
+    return query.split(" ").filter(part => !/^!?(?:user|from|channel|in|server|guild|has|before|after|during|near|around|message):$/.test(part)).join(" ").trim();
+}
+
 const searchBox = {
     splitActiveToken,
     splitLeadingTokens,
     composeSearchBox,
     removeTokens,
-    cancelPick
+    cancelPick,
+    removeTokenAt,
+    prepareSubmission
 };
 
 export default searchBox;

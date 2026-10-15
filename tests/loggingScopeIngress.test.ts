@@ -32,7 +32,7 @@ vi.mock("../db", () => ({
     DBMessageStatus: { DELETED: "DELETED", EDITED: "EDITED", GHOST_PINGED: "GHOST_PINGED" }
 }));
 
-import { ChannelStore, SelectedChannelStore } from "@webpack/common";
+import { ChannelStore, FluxDispatcher, SelectedChannelStore, UserStore } from "@webpack/common";
 
 import idb, { DBMessageStatus } from "../db";
 import { settings } from "../index";
@@ -71,6 +71,7 @@ beforeEach(() => {
     settings.store.messageLimit = 0;
     ChannelStore.getChannel = (id: string) => channels.get(id) ?? null;
     SelectedChannelStore.getChannelId = () => "channel";
+    UserStore.getUser = () => null;
     vi.mocked(idb.getMessageIDB).mockResolvedValue(undefined);
 });
 
@@ -197,5 +198,95 @@ describe("scope at message ingress", () => {
         release(undefined);
         expect(await pending).toBe(false);
         expect(idb.addMessageIDB).not.toHaveBeenCalled();
+    });
+});
+
+describe("strict bot scope at message ingress", () => {
+    it.each(["", "bot", "channel", "allowed-one"])("rejects bot creation before whitelist and DM exceptions for %s", whitelist => {
+        settings.store.ignoreBots = true;
+        settings.store.whitelistedIds = whitelist;
+        channels.set("channel", { type: 1, isDM: () => true });
+        messageHandlers.messageCreateHandler({ message: message("1", { author: { id: "bot", bot: true } }) } as any);
+        expect(messageHandlers.cacheSentMessages.size).toBe(0);
+    });
+
+    it.each([false, true])("does not store ignored bot deletions with ghost ping=%s", async ghostPinged => {
+        settings.store.ignoreBots = true;
+        settings.store.whitelistedIds = "bot";
+        channels.set("channel", { type: 1, isDM: () => true });
+        messageHandlers.setGetMessage(() => message("1", { author: { id: "bot", bot: true }, deleted: true, ghostPinged }));
+        await messageHandlers.messageDeleteHandler({ id: "1", channelId: "channel" } as any);
+        expect(idb.addMessageIDB).not.toHaveBeenCalled();
+        expect(FluxDispatcher.dispatch).toHaveBeenCalledWith({ type: "MESSAGE_DELETE", channelId: "channel", id: "1", mlDeleted: true });
+    });
+
+    it("recovers a bot flag from the same create cache on deletion", async () => {
+        settings.store.ignoreBots = true;
+        settings.store.whitelistedIds = "";
+        messageHandlers.cacheSentMessages.set("channel,1", message("1", { author: { id: "bot", bot: true } }));
+        messageHandlers.setGetMessage(() => message("1", { author: { id: "bot" }, deleted: true }));
+        await messageHandlers.messageDeleteHandler({ id: "1", channelId: "channel" } as any);
+        expect(idb.addMessageIDB).not.toHaveBeenCalled();
+    });
+
+    it("excludes only bots from a mixed bulk deletion", async () => {
+        settings.store.ignoreBots = true;
+        settings.store.whitelistedIds = "allowed-one";
+        messageHandlers.setGetMessage((_channel, id) => message(id, {
+            guildId: "allowed-one", deleted: true, author: { id: `author-${id}`, bot: id === "1" }
+        }));
+        await messageHandlers.messageDeleteBulkHandler({ channelId: "channel", ids: ["1", "2"] } as any);
+        expect(idb.addMessageIDB).toHaveBeenCalledTimes(1);
+        expect(vi.mocked(idb.addMessageIDB).mock.calls[0][0].id).toBe("2");
+    });
+
+    it.each(["native", "archive", "create"])("rejects partial bot edits with %s fallback", async source => {
+        settings.store.ignoreBots = true;
+        settings.store.whitelistedIds = "bot";
+        const original = message("1", { author: { id: "bot", bot: true } });
+        const partialNative = message("1", { author: { id: "bot" } });
+        if (source === "native") messageHandlers.setGetMessage(() => original);
+        else {
+            messageHandlers.setGetMessage(() => partialNative);
+            if (source === "archive") vi.mocked(idb.getMessageIDB).mockResolvedValue({ message: original } as any);
+            else messageHandlers.cacheSentMessages.set("channel,1", original);
+        }
+        nativeCache.set("1", partialNative);
+        await messageHandlers.messageUpdateHandler({ message: { id: "1", channel_id: "channel", content: "edited", attachments: [] } } as any);
+        expect(idb.addMessageIDB).not.toHaveBeenCalled();
+        expect(partialNative.editHistory).toEqual([]);
+    });
+
+    it.each([DBMessageStatus.EDITED, DBMessageStatus.DELETED, DBMessageStatus.GHOST_PINGED])("rejects bot writes at the final writer for %s", async status => {
+        settings.store.ignoreBots = true;
+        settings.store.whitelistedIds = "bot";
+        const bot = message("1", { author: { id: "bot", bot: true }, guildId: "allowed-one" });
+        expect(await writeMessageRecord(bot, status)).toBe(false);
+        await addMessage(bot, status);
+        expect(idb.addMessageIDB).not.toHaveBeenCalled();
+    });
+
+    it("rechecks bot settings after an asynchronous record read", async () => {
+        settings.store.whitelistedIds = "bot";
+        let release: (value: any) => void = () => { };
+        vi.mocked(idb.getMessageIDB).mockImplementationOnce(() => new Promise(resolve => { release = resolve; }));
+        const pending = writeMessageRecord(message("1", { author: { id: "bot", bot: true } }), DBMessageStatus.EDITED);
+        settings.store.ignoreBots = true;
+        release(undefined);
+        expect(await pending).toBe(false);
+        expect(idb.addMessageIDB).not.toHaveBeenCalled();
+    });
+
+    it("only borrows bot metadata from the same author or message", () => {
+        settings.store.ignoreBots = true;
+        settings.store.whitelistedIds = "";
+        const bot = message("1", { author: { id: "bot", bot: true } });
+        expect(loggingScope.allowsMessage({ id: "1", channel_id: "channel" }, bot)).toBe(false);
+        expect(loggingScope.allowsMessage({ id: "2", author: { id: "bot" } }, bot)).toBe(false);
+        expect(loggingScope.allowsMessage({ id: "2", author: { id: "human" } }, bot)).toBe(true);
+        expect(loggingScope.allowsMessage({ id: "2" }, bot)).toBe(true);
+        expect(loggingScope.allowsMessage({ id: "1", author: { id: "human", bot: false } }, bot)).toBe(true);
+        expect(loggingScope.allowsMessage({ id: "1" }, { id: "1", bot: true })).toBe(false);
+        expect(loggingScope.allowsMessage({}, bot)).toBe(false);
     });
 });

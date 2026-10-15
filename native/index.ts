@@ -4,7 +4,9 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
-import { readdir, readFile, unlink, writeFile } from "node:fs/promises";
+import { createHash, randomUUID } from "node:crypto";
+import { constants, createReadStream } from "node:fs";
+import { copyFile, readdir, readFile, rename, stat, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import { DATA_DIR } from "@main/utils/constants";
@@ -16,8 +18,11 @@ export * from "./import";
 export { getNewCommits, getRepoInfo, getUpdateStatus, update } from "./updater";
 
 import { LoggedAttachment } from "../types";
+import attachmentFiles from "../utils/attachmentFiles";
+
+const { attachmentFilenames, attachmentUrls, normalizeFileExtension } = attachmentFiles;
 import { LOGS_DATA_FILENAME } from "../utils/constants";
-import { ensureDirectoryExists, getAttachmentIdFromFilename, sleep } from "./utils";
+import { ensureDirectoryExists, getAttachmentIdFromFilename } from "./utils";
 
 export { getSettings };
 
@@ -28,64 +33,106 @@ export const getNativeSavedImages = () => nativeSavedImages;
 
 let logsDir: string;
 let imageCacheDir: string;
+let directoriesReady: Promise<void> | null = null;
+let imagesReady: Promise<void> | null = null;
+let imageOperations = Promise.resolve();
 
-const getImageCacheDir = async () => imageCacheDir ?? await getDefaultNativeImageDir();
-const getLogsDir = async () => logsDir ?? await getDefaultNativeDataDir();
+const getImageCacheDir = async () => { await initDirs(); return imageCacheDir; };
+const getLogsDir = async () => { await initDirs(); return logsDir; };
 
-
-
-export async function initDirs() {
-    const { logsDir: ld, imageCacheDir: icd } = await getSettings();
-
-    logsDir = ld || await getDefaultNativeDataDir();
-    imageCacheDir = icd || await getDefaultNativeImageDir();
+function queueImageOperation<T>(operation: () => Promise<T>): Promise<T> {
+    const task = imageOperations.then(operation, operation);
+    imageOperations = task.then(() => { }, () => { });
+    return task;
 }
-initDirs();
 
-export async function init(_event: IpcMainInvokeEvent) {
-    const imageDir = await getImageCacheDir();
+export function initDirs() {
+    return directoriesReady ??= (async () => {
+        const settings = await getSettings();
+        logsDir = settings.logsDir || await getDefaultNativeDataDir();
+        imageCacheDir = settings.imageCacheDir || await getDefaultNativeImageDir();
+    })().catch(error => {
+        directoriesReady = null;
+        return Promise.reject(error);
+    });
+}
 
-    await ensureDirectoryExists(imageDir);
-    const files = await readdir(imageDir);
-    for (const filename of files) {
-        const attachmentId = getAttachmentIdFromFilename(filename);
-        nativeSavedImages.set(attachmentId, path.join(imageDir, filename));
+async function scanImages(dir: string) {
+    await ensureDirectoryExists(dir);
+    const files = await readdir(dir, { withFileTypes: true });
+    return new Map(files.filter(file => file.isFile() && !file.name.startsWith(".aegis-"))
+        .map(file => [getAttachmentIdFromFilename(file.name), path.join(dir, file.name)]));
+}
+
+function replaceImageIndex(images: Map<string, string>) {
+    nativeSavedImages.clear();
+    for (const [id, filename] of images) nativeSavedImages.set(id, filename);
+}
+
+export function init(_event?: IpcMainInvokeEvent) {
+    return imagesReady ??= queueImageOperation(async () => {
+        replaceImageIndex(await scanImages(await getImageCacheDir()));
+    }).catch(error => {
+        imagesReady = null;
+        return Promise.reject(error);
+    });
+}
+
+export async function getImageNative(_event: IpcMainInvokeEvent, attachmentId: string, fileExtension?: string | null): Promise<Uint8Array | Buffer | null> {
+    if (!attachmentId || /[\\/.:]/.test(attachmentId)) return null;
+    await init();
+    const directory = imageCacheDir;
+    const stored = nativeSavedImages.get(attachmentId);
+    const candidates = [...new Set([stored, ...attachmentFilenames(attachmentId, fileExtension).map(filename => path.join(directory, filename))])];
+
+    for (const imagePath of candidates) {
+        if (imagePath == null) continue;
+        try {
+            const bytes = await readFile(imagePath);
+            if (bytes.length > 0) {
+                if (directory === imageCacheDir) nativeSavedImages.set(attachmentId, imagePath);
+                return bytes;
+            }
+        } catch { }
+        if (nativeSavedImages.get(attachmentId) === imagePath) nativeSavedImages.delete(attachmentId);
     }
+    return null;
 }
 
-export async function getImageNative(_event: IpcMainInvokeEvent, attachmentId: string): Promise<Uint8Array | Buffer | null> {
-    const imagePath = nativeSavedImages.get(attachmentId);
-    if (!imagePath) return null;
-
-    try {
-        return await readFile(imagePath);
-    } catch (error: any) {
-        console.error(error);
-        return null;
-    }
-}
-
-export async function writeImageNative(_event: IpcMainInvokeEvent, filename: string, content: Uint8Array) {
-    if (!filename || !content) return;
-    const imageDir = await getImageCacheDir();
-
+export async function writeImageNative(event: IpcMainInvokeEvent, filename: string, content: Uint8Array): Promise<string | null> {
+    if (!filename || path.basename(filename) !== filename || /[\\/:]/.test(filename) || !content?.length) return null;
     const attachmentId = getAttachmentIdFromFilename(filename);
+    const extension = normalizeFileExtension(path.extname(filename));
+    if (extension == null || !attachmentFilenames(attachmentId, extension).length) return null;
+    await init();
 
-    const existingImage = nativeSavedImages.get(attachmentId);
-    if (existingImage) return;
-
-    const imagePath = path.join(imageDir, filename);
-    await ensureDirectoryExists(imageDir);
-    await writeFile(imagePath, content);
-
-    nativeSavedImages.set(attachmentId, imagePath);
+    return queueImageOperation(async () => {
+        if (await getImageNative(event, attachmentId, extension)) return nativeSavedImages.get(attachmentId)!;
+        const imagePath = path.join(imageCacheDir, `${attachmentId}${extension}`);
+        const temporary = path.join(imageCacheDir, `.aegis-${randomUUID()}.tmp`);
+        try {
+            await ensureDirectoryExists(imageCacheDir);
+            await writeFile(temporary, content);
+            await rename(temporary, imagePath);
+            nativeSavedImages.set(attachmentId, imagePath);
+            return imagePath;
+        } finally {
+            await unlink(temporary).catch(() => { });
+        }
+    });
 }
 
-export async function deleteFileNative(_event: IpcMainInvokeEvent, attachmentId: string) {
-    const imagePath = nativeSavedImages.get(attachmentId);
-    if (!imagePath) return;
-
-    await unlink(imagePath);
+export async function deleteFileNative(_event: IpcMainInvokeEvent, attachmentId: string, fileExtension?: string | null) {
+    await init();
+    return queueImageOperation(async () => {
+        if (!nativeSavedImages.has(attachmentId) && fileExtension != null) await getImageNative(_event, attachmentId, fileExtension);
+        const imagePath = nativeSavedImages.get(attachmentId);
+        if (!imagePath) return;
+        await unlink(imagePath).catch(error => {
+            if (error.code !== "ENOENT") return Promise.reject(error);
+        });
+        nativeSavedImages.delete(attachmentId);
+    });
 }
 
 
@@ -104,28 +151,78 @@ export async function getDefaultNativeDataDir(): Promise<string> {
     return path.join(DATA_DIR, "AegisLoggerData");
 }
 
-export async function chooseDir(event: IpcMainInvokeEvent, logKey: "logsDir" | "imageCacheDir") {
+export interface directoryChangeError {
+    error: "conflict" | "copy_failed" | "settings_failed";
+    filename?: string;
+}
+
+async function fileHash(filename: string) {
+    const hash = createHash("sha256");
+    for await (const chunk of createReadStream(filename)) hash.update(chunk);
+    return hash.digest("hex");
+}
+
+async function copyImages(source: string, target: string): Promise<directoryChangeError | null> {
+    try {
+        await ensureDirectoryExists(target);
+        const files = await readdir(source, { withFileTypes: true });
+        for (const file of files) {
+            if (!file.isFile() || file.name.startsWith(".aegis-")) continue;
+            const from = path.join(source, file.name);
+            const to = path.join(target, file.name);
+            try {
+                await copyFile(from, to, constants.COPYFILE_EXCL);
+            } catch (error: any) {
+                if (error.code !== "EEXIST") return { error: "copy_failed", filename: file.name };
+                const [left, right] = await Promise.all([stat(from), stat(to)]);
+                if (!right.isFile() || left.size !== right.size || await fileHash(from) !== await fileHash(to)) {
+                    return { error: "conflict", filename: file.name };
+                }
+            }
+        }
+        return null;
+    } catch {
+        return { error: "copy_failed" };
+    }
+}
+
+export async function chooseDir(_event: IpcMainInvokeEvent, logKey: "logsDir" | "imageCacheDir"): Promise<string | directoryChangeError | null> {
+    await init();
     const settings = await getSettings();
     const defaultPath = settings[logKey] || await getDefaultNativeDataDir();
 
     const res = await dialog.showOpenDialog({ properties: ["openDirectory"], defaultPath: defaultPath });
     const dir = res.filePaths[0];
 
-    if (!dir) throw Error("Invalid Directory");
+    if (!dir) return null;
 
-    settings[logKey] = dir;
+    return queueImageOperation<string | directoryChangeError>(async () => {
+        let images: Map<string, string> | null = null;
+        if (logKey === "imageCacheDir") {
+            if (path.resolve(dir) === path.resolve(imageCacheDir)) return imageCacheDir;
+            const error = await copyImages(imageCacheDir, dir);
+            if (error) return error;
+            try {
+                images = await scanImages(dir);
+            } catch {
+                return { error: "copy_failed" };
+            }
+        }
 
-    await saveSettings(settings);
+        try {
+            await saveSettings({ ...(await getSettings()), [logKey]: dir });
+        } catch {
+            return { error: "settings_failed" };
+        }
 
-    switch (logKey) {
-        case "logsDir": logsDir = dir; break;
-        case "imageCacheDir": imageCacheDir = dir; break;
-    }
-
-    if (logKey === "imageCacheDir")
-        await init(event);
-
-    return dir;
+        if (images != null) {
+            imageCacheDir = dir;
+            replaceImageIndex(images);
+        } else {
+            logsDir = dir;
+        }
+        return dir;
+    });
 }
 
 export async function showItemInFolder(_event: IpcMainInvokeEvent, filePath: string) {
@@ -155,56 +252,26 @@ const fetchAttachment = async (event: IpcMainInvokeEvent, url: string) => {
     return await fetch(url);
 };
 
-export async function downloadAttachment(_event: IpcMainInvokeEvent, attachemnt: LoggedAttachment, attempts = 0, useOldUrl = false): Promise<{ error: string | null; path: string | null; }> {
+export async function downloadAttachment(event: IpcMainInvokeEvent, attachment: LoggedAttachment): Promise<{ error: string | null; path: string | null; }> {
     try {
-        if (!attachemnt?.url || !attachemnt.oldUrl || !attachemnt?.id || !attachemnt?.fileExtension)
+        const extension = normalizeFileExtension(attachment?.fileExtension);
+        if (extension == null || !attachmentFilenames(attachment?.id, extension).length)
             return { error: "Invalid Attachment", path: null };
 
-        if (attachemnt.id.match(/[\\/.]/)) {
-            return { error: "Invalid Attachment ID", path: null };
+        if (await getImageNative(event, attachment.id, attachment.fileExtension)) {
+            return { error: null, path: nativeSavedImages.get(attachment.id)! };
         }
 
-        const existingImage = nativeSavedImages.get(attachemnt.id);
-        if (existingImage)
-            return {
-                error: null,
-                path: existingImage
-            };
-
-        const res = await fetchAttachment(_event, useOldUrl ? attachemnt.oldUrl : attachemnt.url);
-
-        if (res.status !== 200) {
-            if (res.status === 404 || res.status === 403 || res.status === 415)
-                useOldUrl = true;
-
-            attempts++;
-            if (attempts > 3) {
-                return {
-                    error: `Failed to get attachment ${attachemnt.id} for caching. too many attempts, error code ${res.status}`,
-                    path: null,
-                };
-            }
-
-            await sleep(1000);
-            return downloadAttachment(_event, attachemnt, attempts, useOldUrl);
+        for (const url of attachmentUrls(attachment)) {
+            try {
+                const response = await fetchAttachment(event, url);
+                if (response.status !== 200) continue;
+                const saved = await writeImageNative(event, `${attachment.id}${extension}`, new Uint8Array(await response.arrayBuffer()));
+                if (saved) return { error: null, path: saved };
+            } catch { }
         }
-
-        const ab = await res.arrayBuffer();
-        const imageCacheDir = await getImageCacheDir();
-        await ensureDirectoryExists(imageCacheDir);
-
-        const finalPath = path.join(imageCacheDir, `${attachemnt.id}${attachemnt.fileExtension}`);
-        await writeFile(finalPath, Buffer.from(ab));
-
-        nativeSavedImages.set(attachemnt.id, finalPath);
-
-        return {
-            error: null,
-            path: finalPath
-        };
-
+        return { error: "Attachment unavailable", path: null };
     } catch (error: any) {
-        console.error(error);
         return { error: `${error.message} (${error.cause?.code ?? "no-cause"})`, path: null };
     }
 }

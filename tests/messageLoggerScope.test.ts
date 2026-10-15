@@ -10,7 +10,7 @@ vi.mock("../index", () => ({ settings: { store: {} } }));
 vi.mock("@webpack", () => ({ findLazy: () => undefined, findByCodeLazy: () => () => undefined }));
 vi.mock("../db", () => ({ DBMessageStatus: { DELETED: "DELETED", EDITED: "EDITED", GHOST_PINGED: "GHOST_PINGED" } }));
 
-import { ChannelStore, MessageStore } from "@webpack/common";
+import { ChannelStore, MessageStore, UserStore } from "@webpack/common";
 
 import { settings } from "../index";
 import messageLoggerScope from "../utils/messageLoggerScope";
@@ -18,13 +18,55 @@ import messageLoggerScope from "../utils/messageLoggerScope";
 beforeEach(() => {
     messageLoggerScope.stop();
     settings.store.whitelistedIds = "allowed-one,allowed-two";
+    settings.store.ignoreBots = false;
     ChannelStore.getChannel = () => null;
     MessageStore.getMessage = () => null;
+    UserStore.getUser = () => null;
 });
 
 afterEach(() => messageLoggerScope.stop());
 
 describe("native MessageLogger scope integration", () => {
+    it.each([
+        [false, false, false],
+        [false, true, true],
+        [true, false, true],
+        [true, true, true]
+    ])("combines independent bot settings with local=%s and native=%s", (localIgnore, nativeIgnore, expected) => {
+        settings.store.ignoreBots = localIgnore;
+        settings.store.whitelistedIds = "bot";
+        const original = vi.fn((message: any, _isEdit?: boolean) => nativeIgnore && message.author?.bot === true);
+        const target = { shouldIgnore: original };
+        messageLoggerScope.start(target);
+        const message = { id: "1", channel_id: "current", author: { id: "bot", bot: true } };
+        expect(target.shouldIgnore(message, false)).toBe(expected);
+        expect(target.shouldIgnore(message, true)).toBe(expected);
+        expect(original).toHaveBeenCalledTimes(localIgnore ? 0 : 2);
+    });
+
+    it("blocks partial bot updates from the same native message before attachment and edit side effects", () => {
+        settings.store.ignoreBots = true;
+        settings.store.whitelistedIds = "";
+        const original = vi.fn((_message: any, _isEdit?: boolean) => false);
+        const target = { shouldIgnore: original };
+        MessageStore.getMessage = (channelId: string, id: string) => ({ id, channel_id: channelId, author: { id: "bot", bot: true } });
+        messageLoggerScope.start(target);
+        expect(target.shouldIgnore({ id: "1", channel_id: "current" }, true)).toBe(true);
+        expect(original).not.toHaveBeenCalled();
+    });
+
+    it("recovers the bot flag from the matching user without borrowing a different cached author", () => {
+        settings.store.ignoreBots = true;
+        settings.store.whitelistedIds = "";
+        const original = vi.fn((_message: any, _isEdit?: boolean) => false);
+        const target = { shouldIgnore: original };
+        MessageStore.getMessage = () => ({ id: "different", author: { id: "other", bot: true } });
+        UserStore.getUser = (id: string) => id === "bot" ? { id, bot: true } : null;
+        messageLoggerScope.start(target);
+        expect(target.shouldIgnore({ id: "1", channel_id: "current", author: { id: "human" } }, true)).toBe(false);
+        expect(target.shouldIgnore({ id: "2", channel_id: "current", author: { id: "bot" } }, true)).toBe(true);
+    });
+
     it("handles an unavailable native target without installing a guard", () => {
         expect(() => messageLoggerScope.start(undefined)).not.toThrow();
         expect(() => messageLoggerScope.start(null)).not.toThrow();

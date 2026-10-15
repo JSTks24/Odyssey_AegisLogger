@@ -104,14 +104,14 @@ export function shouldIgnore({ channelId, authorId, guildId, flags, bot, ghostPi
     if (channelId && !guildId)
         guildId = getGuildIdByChannel(channelId);
 
-    if (!loggingScope.allows({ channelId, authorId, guildId })) return true;
+    if (!loggingScope.allows({ channelId, authorId, guildId, bot })) return true;
 
     if (!ghostPinged && contentExcluded(content, guildId, channelId, authorId))
         return true;
 
     const myId = UserStore.getCurrentUser().id;
     const { ignoreUsers, ignoreChannels, ignoreGuilds } = Settings.plugins.MessageLogger;
-    const { ignoreBots, ignoreSelf } = settings.store;
+    const { ignoreSelf } = settings.store;
 
     if (ignoreSelf && authorId === myId)
         return true;
@@ -143,8 +143,6 @@ export function shouldIgnore({ channelId, authorId, guildId, flags, bot, ghostPi
     const shouldIgnoreMutedGuilds = settings.store.ignoreMutedGuilds;
     const shouldIgnoreMutedCategories = settings.store.ignoreMutedCategories;
     const shouldIgnoreMutedChannels = settings.store.ignoreMutedChannels;
-
-    if ((ignoreBots && bot) && !isAuthorWhitelisted) return true;
 
     if (ghostPinged) return false;
 

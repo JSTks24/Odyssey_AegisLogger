@@ -4,7 +4,7 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
-import { ChannelStore } from "@webpack/common";
+import { ChannelStore, UserStore } from "@webpack/common";
 
 import { settings } from "..";
 import { getGuildIdByChannel } from "./misc";
@@ -13,6 +13,7 @@ interface logScopeContext {
     channelId?: string;
     authorId?: string;
     guildId?: string | null;
+    bot?: boolean;
 }
 
 function guildId(context: logScopeContext): string | undefined {
@@ -20,14 +21,22 @@ function guildId(context: logScopeContext): string | undefined {
 }
 
 function context(message: any, fallback?: any): logScopeContext {
+    const sameMessage = message?.id == null || message.id === fallback?.id;
+    const authorId = message?.author?.id ?? (sameMessage ? fallback?.author?.id : undefined);
+    const sameAuthor = authorId != null && authorId === fallback?.author?.id;
+    const fallbackBot = sameAuthor || (sameMessage && message?.author?.id == null) ? fallback?.author?.bot ?? fallback?.bot : undefined;
+
     return {
         channelId: message?.channel_id ?? message?.channelId ?? fallback?.channel_id ?? fallback?.channelId,
-        authorId: message?.author?.id ?? fallback?.author?.id,
-        guildId: message?.guild_id || message?.guildId || fallback?.guild_id || fallback?.guildId
+        authorId,
+        guildId: message?.guild_id || message?.guildId || fallback?.guild_id || fallback?.guildId,
+        bot: message?.author?.bot ?? message?.bot ?? fallbackBot
     };
 }
 
 function allows(value: logScopeContext): boolean {
+    if (settings.store.ignoreBots && (value.bot ?? (value.authorId ? UserStore.getUser(value.authorId)?.bot : false))) return false;
+
     const whitelist = ((settings.store.whitelistedIds as string) ?? "").split(",").map(id => id.trim()).filter(Boolean);
     if (whitelist.length === 0) return true;
 

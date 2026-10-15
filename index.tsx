@@ -136,6 +136,14 @@ export default definePlugin({
         },
 
         {
+            find: /poster:\i\.toString\(\),alt:\i\.item\.originalItem\.description/,
+            replacement: {
+                match: /poster:(\i)\.toString\(\)(?=,alt:\i\.item\.originalItem\.description)/,
+                replace: "poster:$self.imageUtils.videoPoster($1.toString())"
+            }
+        },
+
+        {
             find: "Using PollReferenceMessageContext without",
             replacement: {
                 match: /(?:\i\.)?\i\.(?:default\.)?focusMessage\(/,

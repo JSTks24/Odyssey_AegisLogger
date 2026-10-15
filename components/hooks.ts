@@ -21,10 +21,8 @@ interface messageLoadContext {
 
 export interface messageLoadResult {
     records: DBMessageRecord[];
-    statusTotal: number;
     hasMore: boolean;
     nextOffset: number;
-    scope: leaseScope | null;
 }
 
 export interface messagePageCursor {
@@ -41,23 +39,19 @@ export interface messagePageRequest {
     knownIds: Set<string> | undefined;
 }
 
-export type messageLoadPhase = "initial" | "searching" | "indexing" | "more";
+export type messageLoadPhase = "initial" | "searching" | "more";
 
-export function resolveLoadPhase(isLoadMore: boolean, query: string, indexReady: boolean): messageLoadPhase {
+function resolveLoadPhase(isLoadMore: boolean, query: string): messageLoadPhase {
     if (isLoadMore) return "more";
     if (query === "") return "initial";
-    return indexReady ? "searching" : "indexing";
+    return "searching";
 }
 
-export function planPageRecords(previous: DBMessageRecord[], incoming: DBMessageRecord[]): { records: DBMessageRecord[]; dropped: string[]; } {
-    const records = dedupeRecords([...previous, ...incoming]);
-    const kept = new Set(records);
-    const dropped = incoming.filter(record => !kept.has(record)).map(record => record.message_id);
-
-    return { records, dropped };
+function planPageRecords(previous: DBMessageRecord[], incoming: DBMessageRecord[]) {
+    return { records: dedupeRecords([...previous, ...incoming]) };
 }
 
-export function planNextPage(previous: messagePageCursor | null, context: messageLoadContext, numDisplayedMessages: number): messagePageRequest {
+function planNextPage(previous: messagePageCursor | null, context: messageLoadContext, numDisplayedMessages: number): messagePageRequest {
     const isLoadMore = previous != null
         && previous.context.query === context.query
         && previous.context.tab === context.tab
@@ -73,50 +67,6 @@ export function planNextPage(previous: messagePageCursor | null, context: messag
         offset: previous.rawOffset,
         limit: numDisplayedMessages - previous.records.length,
         knownIds: new Set(previous.records.map(record => record.message_id))
-    };
-}
-
-export interface pageLeases {
-    adopt(scope: leaseScope | null): void;
-    adoptMore(scope: leaseScope | null, dropped: string[]): void;
-    retire(): leaseScope[];
-    releaseAll(): void;
-    count(): number;
-}
-
-export function createPageLeases(): pageLeases {
-    let scopes: leaseScope[] = [];
-    let retired: leaseScope[] = [];
-
-    return {
-        adopt(scope) {
-            retired = [...retired, ...scopes];
-            scopes = scope != null ? [scope] : [];
-        },
-        adoptMore(scope, dropped) {
-            if (scope == null) return;
-
-            scope.releaseRecords(dropped);
-            if (scope.size() === 0) return;
-
-            scopes = [...scopes, scope];
-        },
-        retire() {
-            const pending = retired;
-            retired = [];
-
-            return pending;
-        },
-        releaseAll() {
-            const pending = [...scopes, ...retired];
-            scopes = [];
-            retired = [];
-
-            for (const scope of pending) scope.release();
-        },
-        count() {
-            return scopes.length;
-        }
     };
 }
 
@@ -141,47 +91,34 @@ async function loadMessagesPage(
     knownIds?: Set<string>
 ): Promise<messageLoadResult> {
     const freshRecords = (records: DBMessageRecord[]) =>
-        knownIds == null ? records : records.filter(record => !knownIds.has(record.message_id));
+        dedupeRecords(records).filter(record => !knownIds?.has(record.message_id));
+    const cancelledResult = { records: [], hasMore: false, nextOffset: offset };
 
     if (query === "") {
-        const [records, statusTotal] = await Promise.all([
-            idb.getDateStortedMessagesByStatusIDB(sortNewest, limit, status, offset),
-            idb.countMessagesByStatusIDB(status),
-        ]);
-
-        if (isCancelled?.()) return { records: [], statusTotal: 0, hasMore: false, nextOffset: offset, scope: null };
-
-        const hydrated = await idb.hydrateRecords(freshRecords(records), isCancelled);
+        const records = await idb.getDateStortedMessagesByStatusIDB(sortNewest, limit + 1, status, offset);
+        if (isCancelled?.()) return cancelledResult;
+        const page = records.slice(0, limit);
         return {
-            records: hydrated.records,
-            statusTotal,
-            hasMore: offset + records.length < statusTotal,
-            nextOffset: offset + records.length,
-            scope: hydrated.scope
+            records: freshRecords(page),
+            hasMore: records.length > limit,
+            nextOffset: offset + page.length
         };
     }
 
     const { queries, rest } = tokenizeQuery(query);
 
-    try {
-        await searchIndex.ensureReady(() => idb.iterateRawMessagesIDB(2000));
-    } catch { }
-
-    if (isCancelled?.()) return { records: [], statusTotal: 0, hasMore: false, nextOffset: offset, scope: null };
+    if (isCancelled?.()) return cancelledResult;
 
     if (searchIndex.isReady()) {
-        const { page, total } = searchIndex.search(queries, rest, status, limit, sortNewest, offset);
+        const { page, hasMore } = searchIndex.search(queries, rest, status, limit, sortNewest, offset);
         const records = await idb.getMessagesByIDsIDB(page.map(entry => entry.id));
 
-        if (isCancelled?.()) return { records: [], statusTotal: 0, hasMore: false, nextOffset: offset, scope: null };
+        if (isCancelled?.()) return cancelledResult;
 
-        const hydrated = await idb.hydrateRecords(freshRecords(records), isCancelled);
         return {
-            records: hydrated.records,
-            statusTotal: total,
-            hasMore: offset + page.length < total,
-            nextOffset: offset + page.length,
-            scope: hydrated.scope
+            records: freshRecords(records),
+            hasMore,
+            nextOffset: offset + page.length
         };
     }
 
@@ -190,7 +127,7 @@ async function loadMessagesPage(
     let hasMore = false;
 
     for await (const batch of idb.iterateRawMessagesByStatusIDB(status, sortNewest)) {
-        if (isCancelled?.()) return { records: [], statusTotal: 0, hasMore: false, nextOffset: offset, scope: null };
+        if (isCancelled?.()) return cancelledResult;
 
         for (const record of batch) {
             if (!searchIndex.matchesRecord(record, queries, rest)) continue;
@@ -209,22 +146,17 @@ async function loadMessagesPage(
         if (hasMore) break;
     }
 
-    if (isCancelled?.()) return { records: [], statusTotal: 0, hasMore: false, nextOffset: offset, scope: null };
+    if (isCancelled?.()) return cancelledResult;
 
-    const page = freshRecords(dedupeRecords(matched));
-    const hydrated = await idb.hydrateRecords(page, isCancelled);
     return {
-        records: hydrated.records,
-        statusTotal: offset + matched.length + (hasMore ? 1 : 0),
+        records: freshRecords(matched),
         hasMore,
-        nextOffset: offset + matched.length,
-        scope: hydrated.scope
+        nextOffset: offset + matched.length
     };
 }
 
 function useMessages(query: string, currentTab: LogTabs, sortNewest: boolean, numDisplayedMessages: number) {
     const [messages, setMessages] = useState<DBMessageRecord[]>([]);
-    const [statusTotal, setStatusTotal] = useState<number>(0);
     const [hasMore, setHasMore] = useState<boolean>(false);
     const [total, setTotal] = useState<number | null>(null);
     const [pending, setPending] = useState<boolean>(true);
@@ -232,10 +164,7 @@ function useMessages(query: string, currentTab: LogTabs, sortNewest: boolean, nu
     const [error, setError] = useState<unknown>(null);
     const [reloadVersion, setReloadVersion] = useState(0);
 
-    const debouncedQuery = useDebouncedValue(query, 300);
     const contextRef = useRef<messagePageCursor | null>(null);
-    const pageLeasesRef = useRef<pageLeases | null>(null);
-    if (pageLeasesRef.current == null) pageLeasesRef.current = createPageLeases();
 
     const reset = useCallback(() => setReloadVersion(v => v + 1), []);
 
@@ -244,66 +173,27 @@ function useMessages(query: string, currentTab: LogTabs, sortNewest: boolean, nu
         const isCancelled = () => cancelled;
 
         const previous = contextRef.current;
-        const context: messageLoadContext = { query: debouncedQuery, tab: currentTab, sortNewest, reload: reloadVersion };
+        const context: messageLoadContext = { query, tab: currentTab, sortNewest, reload: reloadVersion };
         const request = planNextPage(previous, context, numDisplayedMessages);
         const { isLoadMore } = request;
 
         setPending(true);
         setError(null);
-        setPhase(resolveLoadPhase(isLoadMore, debouncedQuery, searchIndex.isReady()));
+        setPhase(resolveLoadPhase(isLoadMore, query));
 
         const status = getStatus(currentTab);
 
-        const adoptAsPage = (scope: leaseScope | null) => {
-            pageLeasesRef.current!.adopt(scope);
-        };
-
-        const adoptIntoPages = (result: messageLoadResult, dropped: string[]) => {
-            pageLeasesRef.current!.adoptMore(result.scope, dropped);
-        };
-
-        const run = async () => {
-            if (!isLoadMore && debouncedQuery !== "" && !searchIndex.isReady()) {
-                try {
-                    await searchIndex.ensureReady(() => idb.iterateRawMessagesIDB(2000));
-                } catch { }
-                if (cancelled) return null;
-                setPhase("searching");
-            }
-
-            const result = await loadMessagesPage(
-                debouncedQuery,
-                status,
-                sortNewest,
-                request.offset,
-                request.limit,
-                isCancelled,
-                request.knownIds
-            );
-
-            if (cancelled) {
-                result.scope?.release();
-                return null;
-            }
-
-            return result;
-        };
-
-        run().then(result => {
-            if (result == null || cancelled) return;
+        loadMessagesPage(query, status, sortNewest, request.offset, request.limit, isCancelled, request.knownIds).then(result => {
+            if (cancelled) return;
 
             const planned = isLoadMore && previous != null
                 ? planPageRecords(previous.records, result.records)
-                : { records: result.records, dropped: [] };
-
-            if (isLoadMore && previous != null) adoptIntoPages(result, planned.dropped);
-            else adoptAsPage(result.scope);
+                : { records: result.records };
 
             const { records } = planned;
 
             contextRef.current = { context, numDisplayed: numDisplayedMessages, records, rawOffset: result.nextOffset };
             setMessages(records);
-            setStatusTotal(result.statusTotal);
             setHasMore(result.hasMore);
             setPending(false);
             setPhase(null);
@@ -317,7 +207,7 @@ function useMessages(query: string, currentTab: LogTabs, sortNewest: boolean, nu
         return () => {
             cancelled = true;
         };
-    }, [debouncedQuery, currentTab, sortNewest, numDisplayedMessages, reloadVersion]);
+    }, [query, currentTab, sortNewest, numDisplayedMessages, reloadVersion]);
 
     useEffect(() => {
         let cancelled = false;
@@ -331,17 +221,49 @@ function useMessages(query: string, currentTab: LogTabs, sortNewest: boolean, nu
         };
     }, [reloadVersion]);
 
-    useEffect(() => {
-        for (const scope of pageLeasesRef.current!.retire()) scope.release();
-    }, [messages]);
+    return { messages, hasMore, total, pending, phase, error, reset, retry: reset };
+}
+
+function useVisibleRecord(record: DBMessageRecord) {
+    const ref = useRef<HTMLDivElement | null>(null);
+    const [loaded, setLoaded] = useState<{ source: DBMessageRecord; display: DBMessageRecord } | null>(null);
 
     useEffect(() => {
-        return () => {
-            pageLeasesRef.current!.releaseAll();
+        if (!record.message.attachments?.length) return;
+        let cancelled = false;
+        let started = false;
+        let scope: leaseScope | null = null;
+        const load = () => {
+            if (started || cancelled) return;
+            started = true;
+            observer?.disconnect();
+            idb.hydrateRecords([record], () => cancelled).then(result => {
+                if (cancelled) {
+                    result.scope.release();
+                    return;
+                }
+                scope = result.scope;
+                setLoaded({ source: record, display: result.records[0] ?? record });
+            }).catch(() => {
+                if (!cancelled) setLoaded({ source: record, display: record });
+            });
         };
-    }, []);
+        const observer = typeof IntersectionObserver === "undefined" ? null : new IntersectionObserver(entries => {
+            if (entries.some(entry => entry.isIntersecting)) load();
+        }, { rootMargin: "240px" });
 
-    return { messages, statusTotal, hasMore, total, pending, phase, error, reset, retry: reset };
+        if (observer != null && ref.current != null) observer.observe(ref.current);
+        else load();
+
+        return () => {
+            cancelled = true;
+            observer?.disconnect();
+            scope?.release();
+        };
+    }, [record]);
+
+    const ready = !record.message.attachments?.length || loaded?.source === record;
+    return { ref, record: loaded?.source === record ? loaded.display : record, attachmentsPending: !ready };
 }
 
 const hooks = {
@@ -350,26 +272,11 @@ const hooks = {
     dedupeRecords,
     planPageRecords,
     planNextPage,
-    createPageLeases
+    resolveLoadPhase,
+    useVisibleRecord
 };
 
 export default hooks;
-
-function useDebouncedValue<T>(value: T, delay: number): T {
-    const [debouncedValue, setDebouncedValue] = useState(value);
-
-    useEffect(() => {
-        const handler = setTimeout(() => {
-            setDebouncedValue(value);
-        }, delay);
-
-        return () => {
-            clearTimeout(handler);
-        };
-    }, [value, delay]);
-
-    return debouncedValue;
-}
 
 function getStatus(currentTab: LogTabs) {
     switch (currentTab) {

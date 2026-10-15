@@ -23,124 +23,109 @@ import {
     keys,
     set,
 } from "@api/DataStore";
-import { sleep } from "@utils/misc";
 
-import { logger, Native } from "../..";
+import { Native } from "../..";
 import { LoggedAttachment } from "../../types";
+import attachmentFiles from "../attachmentFiles";
 import { DEFAULT_IMAGE_CACHE_DIR } from "../constants";
+
+const { attachmentFilenames, attachmentUrls, normalizeFileExtension } = attachmentFiles;
 
 const ImageStore = createStore("AegisLoggerImageData", "AegisLoggerImageStore");
 
-interface IDBSavedImage { attachmentId: string, path: string; }
-const idbSavedImages = new Map<string, IDBSavedImage>();
-(async () => {
-    try {
+const idbSavedImages = new Map<string, string>();
+let imageIndexReady = Promise.resolve();
 
-        const paths = await keys(ImageStore);
-        paths.forEach(path => {
-            const str = path.toString();
-            if (!str.startsWith(DEFAULT_IMAGE_CACHE_DIR)) return;
+export function refreshImageIndex() {
+    imageIndexReady = imageIndexReady.then(async () => {
+        for (const key of await keys(ImageStore)) {
+            const value = String(key);
+            if (!value.startsWith(`${DEFAULT_IMAGE_CACHE_DIR}/`)) continue;
+            const filename = value.slice(DEFAULT_IMAGE_CACHE_DIR.length + 1);
+            const id = filename.replace(/\.[^.]+$/, "");
+            idbSavedImages.set(id, value);
+        }
+    }).catch(() => { });
+    return imageIndexReady;
+}
 
-            idbSavedImages.set(str.split("/")?.[1]?.split(".")?.[0], { attachmentId: str.split("/")?.[1]?.split(".")?.[0], path: str });
-        });
-    } catch (err) {
-        logger.error("Failed to get idb images", err);
-    }
-})();
+refreshImageIndex();
 
 export async function getImage(attachmentId: string, fileExt?: string | null): Promise<any> {
-    // for people who have access to native api but some images are still in idb
-    // also for people who dont have native api
-    const idbPath = idbSavedImages.get(attachmentId)?.path;
-    if (idbPath)
-        return get(idbPath, ImageStore);
+    await imageIndexReady;
+    const indexed = idbSavedImages.get(attachmentId);
+    const paths = [...new Set([indexed, ...attachmentFilenames(attachmentId, fileExt)
+        .map(filename => idbSavedImages.get(filename.replace(/\.[^.]+$/, "")))])];
+    for (const path of paths) {
+        if (path == null) continue;
+        try {
+            const bytes = await get(path, ImageStore);
+            if (bytes != null) {
+                idbSavedImages.set(attachmentId, path);
+                return bytes;
+            }
+        } catch { }
+        if (idbSavedImages.get(attachmentId) === path) idbSavedImages.delete(attachmentId);
+    }
 
     if (IS_WEB) return null;
 
-    return await Native.getImageNative(attachmentId);
+    return await Native.getImageNative(attachmentId, fileExt);
 }
 
-export async function downloadAttachment(attachemnt: LoggedAttachment): Promise<string | undefined> {
+export async function downloadAttachment(attachment: LoggedAttachment): Promise<string | undefined> {
+    const extension = normalizeFileExtension(attachment?.fileExtension);
+    if (extension == null || !attachmentFilenames(attachment?.id, extension).length) return;
+
     if (IS_WEB) {
-        return await downloadAttachmentWeb(attachemnt);
+        return await downloadAttachmentWeb(attachment);
     }
-
-    const { path, error } = await Native.downloadAttachment(attachemnt);
-
-    if (!error && path) {
-        return path;
-    }
-
-    const fallbackPath = await downloadAttachmentFromRenderer(attachemnt);
-
-    if (fallbackPath) {
-        return fallbackPath;
-    }
-
-    logger.error("Failed to download attachment", error, attachemnt?.id);
-
-    return;
-}
-
-async function downloadAttachmentFromRenderer(attachemnt: LoggedAttachment): Promise<string | undefined> {
-    if (!attachemnt?.url || !attachemnt?.id || !attachemnt?.fileExtension) return;
-
-    const filename = `${attachemnt.id}${attachemnt.fileExtension}`;
 
     try {
-        const res = await fetch(attachemnt.url);
+        const { path, error } = await Native.downloadAttachment(attachment);
+        if (!error && path) return path;
+    } catch { }
+    return downloadAttachmentFromRenderer(attachment);
+}
 
-        if (res.status !== 200) {
-            logger.error("Renderer fallback failed to download attachment", attachemnt.id, res.status);
-            return;
-        }
-
-        await Native.writeImageNative(filename, new Uint8Array(await res.arrayBuffer()));
-
-        return filename;
-    } catch (error: any) {
-        logger.error("Renderer fallback failed to download attachment", attachemnt.id, error?.message);
-        return;
+async function downloadAttachmentFromRenderer(attachment: LoggedAttachment): Promise<string | undefined> {
+    const filename = `${attachment.id}${normalizeFileExtension(attachment.fileExtension)}`;
+    for (const url of attachmentUrls(attachment)) {
+        try {
+            const response = await fetch(url);
+            if (response.status !== 200) continue;
+            const saved = await Native.writeImageNative(filename, new Uint8Array(await response.arrayBuffer()));
+            if (saved) return saved;
+        } catch { }
     }
 }
 
-export async function deleteImage(attachmentId: string): Promise<void> {
-    const idbPath = idbSavedImages.get(attachmentId)?.path;
-    if (idbPath)
-        return await del(idbPath, ImageStore);
-
-
+export async function deleteImage(attachmentId: string, fileExtension?: string | null): Promise<void> {
+    await imageIndexReady;
+    if (!idbSavedImages.has(attachmentId) && fileExtension != null) await getImage(attachmentId, fileExtension);
+    const idbPath = idbSavedImages.get(attachmentId);
+    if (idbPath) {
+        await del(idbPath, ImageStore);
+        idbSavedImages.delete(attachmentId);
+    }
     if (IS_WEB) return;
 
-    await Native.deleteFileNative(attachmentId);
+    await Native.deleteFileNative(attachmentId, fileExtension);
 }
 
 
-async function downloadAttachmentWeb(attachemnt: LoggedAttachment, attempts = 0) {
-    if (!attachemnt?.url || !attachemnt?.id || !attachemnt?.fileExtension) {
-        logger.error("Invalid attachment", attachemnt);
-        return;
+async function downloadAttachmentWeb(attachment: LoggedAttachment) {
+    await imageIndexReady;
+    for (const url of attachmentUrls(attachment)) {
+        try {
+            const response = await fetch(url);
+            if (response.status !== 200) continue;
+            const bytes = new Uint8Array(await response.arrayBuffer());
+            if (!bytes.length) continue;
+            const path = `${DEFAULT_IMAGE_CACHE_DIR}/${attachment.id}${normalizeFileExtension(attachment.fileExtension)}`;
+            await set(path, bytes, ImageStore);
+            idbSavedImages.set(attachment.id, path);
+            return path;
+        } catch { }
     }
-
-    const res = await fetch(attachemnt.url);
-    if (res.status !== 200) {
-        if (res.status === 404 || res.status === 403) return;
-        attempts++;
-        if (attempts > 3) {
-            logger.warn(`Failed to get attachment ${attachemnt.id} for caching, error code ${res.status}`);
-            return;
-        }
-
-        await sleep(1000);
-        return downloadAttachmentWeb(attachemnt, attempts);
-    }
-    const ab = await res.arrayBuffer();
-    const path = `${DEFAULT_IMAGE_CACHE_DIR}/${attachemnt.id}${attachemnt.fileExtension}`;
-
-    // await writeImage(imageCacheDir, `${attachmentId}${fileExtension}`, new Uint8Array(ab));
-
-    await set(path, new Uint8Array(ab), ImageStore);
-    idbSavedImages.set(attachemnt.id, { attachmentId: attachemnt.id, path });
-
-    return path;
 }

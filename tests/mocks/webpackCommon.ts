@@ -65,8 +65,8 @@ export function createToast(data: StubToastData): StubNewToastData {
     return { text: data.message, variant: VARIANT_OF_TYPE[data.type ?? "message"], duration: data.options?.duration };
 }
 
-export function showToast(message: string, type: ToastType = "message", options?: { duration?: number }) {
-    Toasts.show(createToast({ message, type, options }));
+export function showToast(message: string | StubNewToastData, type: ToastType = "message", options?: { duration?: number }) {
+    Toasts.show(typeof message === "string" ? createToast({ message, type, options }) : message);
 }
 
 export const Alerts: any = { show: vi.fn() };
