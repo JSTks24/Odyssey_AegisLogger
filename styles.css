@@ -302,8 +302,9 @@
 }
 
 .aegis-modal-search-input {
-    flex: 1;
-    min-width: 60px;
+    flex: 0 1 auto;
+    min-width: 1ch;
+    max-width: 100%;
     background: transparent;
     border: none;
     outline: none;
@@ -323,6 +324,12 @@
     background: color-mix(in srgb, var(--interactive-accent, #5865f2) 15%, transparent);
     color: var(--text-link, #00a8fc);
     user-select: none;
+    max-width: 100%;
+    overflow-wrap: anywhere;
+}
+
+.aegis-modal-search-all-selected {
+    background: color-mix(in srgb, var(--interactive-accent, #5865f2) 30%, transparent);
 }
 
 .aegis-modal-search-token b {

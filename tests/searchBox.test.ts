@@ -17,74 +17,6 @@ beforeEach(() => {
     parseQuery.clear();
 });
 
-describe("splitActiveToken", () => {
-    it("returns null when the marker is absent", () => {
-        expect(searchBox.splitActiveToken("", "user")).toBeNull();
-        expect(searchBox.splitActiveToken("has:image", "user")).toBeNull();
-    });
-
-    it("splits at the marker when it leads the query", () => {
-        expect(searchBox.splitActiveToken("user:", "user")).toEqual({ head: "", rest: "", prefix: "user:" });
-        expect(searchBox.splitActiveToken("user:123", "user")).toEqual({ head: "", rest: "123", prefix: "user:" });
-    });
-
-    it("keeps spaces inside the picked value", () => {
-        expect(searchBox.splitActiveToken("user:ali smith", "user")).toEqual({ head: "", rest: "ali smith", prefix: "user:" });
-    });
-
-    it("keeps everything before the marker in head", () => {
-        expect(searchBox.splitActiveToken("has:image user:ali", "user")).toEqual({ head: "has:image ", rest: "ali", prefix: "user:" });
-        expect(searchBox.splitActiveToken("user:1 server:2 user:ali", "user")).toEqual({ head: "user:1 server:2 ", rest: "ali", prefix: "user:" });
-    });
-
-    it("ignores markers that are not on a token boundary", () => {
-        expect(searchBox.splitActiveToken("xuser:1", "user")).toBeNull();
-        expect(searchBox.splitActiveToken("user_1:2", "user")).toBeNull();
-    });
-
-    it("takes the last boundary marker of the same kind", () => {
-        expect(searchBox.splitActiveToken("user:1 user:2 smith", "user")).toEqual({ head: "user:1 ", rest: "2 smith", prefix: "user:" });
-    });
-
-    it("handles CJK and mixed content in the rest", () => {
-        expect(searchBox.splitActiveToken("user:下载 测试", "user")).toEqual({ head: "", rest: "下载 测试", prefix: "user:" });
-    });
-
-    it("recognizes a negated marker on a token boundary", () => {
-        expect(searchBox.splitActiveToken("!user:123", "user")).toEqual({ head: "", rest: "123", prefix: "!user:" });
-        expect(searchBox.splitActiveToken("has:image !user:ali", "user")).toEqual({ head: "has:image ", rest: "ali", prefix: "!user:" });
-    });
-
-    it("ignores negated markers that are not on a token boundary", () => {
-        expect(searchBox.splitActiveToken("x!user:1", "user")).toBeNull();
-    });
-});
-
-describe("splitLeadingTokens", () => {
-    it("keeps free text whole", () => {
-        expect(searchBox.splitLeadingTokens("abc def")).toEqual({ tokens: [], rest: "abc def" });
-        expect(searchBox.splitLeadingTokens("")).toEqual({ tokens: [], rest: "" });
-    });
-
-    it("lifts the leading token run out of the rest", () => {
-        expect(searchBox.splitLeadingTokens("user:123 hello world")).toEqual({ tokens: ["user:123"], rest: "hello world" });
-        expect(searchBox.splitLeadingTokens("user:123 has:image")).toEqual({ tokens: ["user:123", "has:image"], rest: "" });
-    });
-
-    it("stops at the first non token segment", () => {
-        expect(searchBox.splitLeadingTokens("hello user:123")).toEqual({ tokens: [], rest: "hello user:123" });
-    });
-
-    it("does not treat an empty value as a token", () => {
-        expect(searchBox.splitLeadingTokens("user:")).toEqual({ tokens: [], rest: "user:" });
-    });
-
-    it("preserves inner and trailing spaces", () => {
-        expect(searchBox.splitLeadingTokens("hello  world ")).toEqual({ tokens: [], rest: "hello  world " });
-        expect(searchBox.splitLeadingTokens("user:1 hello  world ")).toEqual({ tokens: ["user:1"], rest: "hello  world " });
-    });
-});
-
 describe("removeTokens", () => {
     it("drops every token of the given keys", () => {
         expect(searchBox.removeTokens("before:2026-01-01 hello after:2026-02-02", ["before", "after"])).toBe("hello");
@@ -98,72 +30,63 @@ describe("removeTokens", () => {
     });
 });
 
-describe("cancelPick", () => {
-    it("returns the query untouched when the marker is absent", () => {
-        expect(searchBox.cancelPick("has:image", "user", null)).toBe("has:image");
-        expect(searchBox.cancelPick("has:image", "user", "user:100")).toBe("has:image");
-    });
-
-    it("drops the whole fragment for a fresh pick", () => {
-        expect(searchBox.cancelPick("user:", "user", null)).toBe("");
-        expect(searchBox.cancelPick("has:image user:", "user", null)).toBe("has:image");
-        expect(searchBox.cancelPick("has:image user:zzz", "user", null)).toBe("has:image");
-    });
-
-    it("restores the original token for an edited pick", () => {
-        expect(searchBox.cancelPick("user:5", "user", "user:100")).toBe("user:100");
-        expect(searchBox.cancelPick("has:image user:5", "user", "user:100")).toBe("has:image user:100");
-        expect(searchBox.cancelPick("user:", "user", "user:100")).toBe("user:100");
-    });
-
-    it("keeps negated fragments intact when restoring", () => {
-        expect(searchBox.cancelPick("!user:5", "user", "!user:100")).toBe("!user:100");
-    });
-
-    it("returns the query as-is when an edit did not change anything", () => {
-        expect(searchBox.cancelPick("user:100", "user", "user:100")).toBe("user:100");
-    });
-});
-
-describe("composeSearchBox round trip", () => {
-    const cases: [string[], string][] = [
-        [[], ""],
-        [[], "abc"],
-        [[], "abc def"],
-        [[], "下载 测试"],
-        [[], "hello  world "],
-        [["user:123"], ""],
-        [["user:123"], "hello"],
-        [["user:123"], "ali smith"],
-        [["user:123", "has:image"], ""],
-        [["user:123", "has:image"], "下载 测试"],
-        [["user:123"], "123abc"]
-    ];
-
-    it.each(cases)("split(compose(%j, %j)) is identity", (tokens, rest) => {
-        expect(searchBox.splitLeadingTokens(searchBox.composeSearchBox(tokens, rest))).toEqual({ tokens, rest });
-    });
-
-    it("drops the trailing token on backspace-from-empty", () => {
-        const { tokens } = searchBox.splitLeadingTokens("user:123 has:image");
-
-        expect(searchBox.splitLeadingTokens(searchBox.composeSearchBox(tokens.slice(0, -1), "")).tokens).toEqual(["user:123"]);
-    });
-});
-
-describe("token deletion and submission", () => {
-    it("removes only the selected token and preserves the query text", () => {
-        expect(searchBox.removeTokenAt("has:image !user:123 message:456 hello  world", 1)).toBe("has:image message:456 hello  world");
-        expect(searchBox.removeTokenAt("has:image has:image", 0)).toBe("has:image");
-        expect(searchBox.removeTokenAt("hello has:image", 0)).toBe("hello has:image");
-        expect(searchBox.removeTokenAt("has:image", -1)).toBe("has:image");
-        expect(searchBox.removeTokenAt("has:image", 1)).toBe("has:image");
-    });
-
+describe("submission", () => {
     it("drops empty filter prefixes while retaining completed filters and free text", () => {
         expect(searchBox.prepareSubmission("has:image user:")).toBe("has:image");
         expect(searchBox.prepareSubmission("!channel: user:alice hello  world ")).toBe("user:alice hello  world");
         expect(searchBox.prepareSubmission("url: custom:")).toBe("url: custom:");
         expect(searchBox.prepareSubmission(" user: ")).toBe("");
+    });
+});
+
+describe("ordered search segments", () => {
+    it.each([
+        ["", []],
+        ["hello world", []],
+        [" hello  world ", []],
+        ["user:", []],
+        ["!user:", []],
+        ["xuser:1", []],
+        ["x!user:1", []],
+        ["user_1:2", []],
+        ["user:123 hello world", ["user:123"]],
+        ["hello user:123", ["user:123"]],
+        ["user:1 user:2 smith", ["user:1", "user:2"]],
+        ["下载 !user:123 测试", ["!user:123"]],
+        ["aaa from:123 bbb in:456 ccc guild:789", ["from:123", "in:456", "guild:789"]],
+        ["has:image has:unknown", ["has:image"]],
+        ["before:2026-01-01 hello after:2026-02-02", ["before:2026-01-01", "after:2026-02-02"]],
+        ["before:invalid after:2026-02-30", []],
+        ["hello message:456", ["message:456"]],
+        ["hello message:invalid", []],
+        ["hello  user:123  world ", ["user:123"]],
+        ["!has:image !channel:123", ["!has:image", "!channel:123"]]
+    ])("preserves %s and identifies completed filters", (query, expected) => {
+        const parts = searchBox.segments(query as string);
+        expect(parts.map(part => part.raw).join("")).toBe(query);
+        expect(parts.filter(part => part.token).map(part => part.raw)).toEqual(expected);
+        for (const part of parts) expect((query as string).slice(part.start, part.end)).toBe(part.raw);
+    });
+
+    it("preserves text and tokens in their original positions", () => {
+        const query = "aaa user:1111 bbb has:image ccc";
+        const segments = searchBox.segments(query);
+        expect(segments.map(segment => segment.raw).join("")).toBe(query);
+        expect(segments.map(segment => segment.token?.key ?? "text")).toEqual(["text", "user", "text", "has", "text"]);
+        expect(searchBox.removeRange(query, segments.filter(segment => segment.token)[0])).toBe("aaa bbb has:image ccc");
+        expect(searchBox.removeRange(query, segments.filter(segment => segment.token)[1])).toBe("aaa user:1111 bbb ccc");
+    });
+
+    it("keeps unfinished, invalid and actively edited conditions as text", () => {
+        const query = "aaa user:1111 has:unknown before:invalid channel: bbb";
+        expect(searchBox.segments(query).filter(segment => segment.token)).toHaveLength(1);
+        expect(searchBox.segments(query, { start: 4, end: 13 }).filter(segment => segment.token)).toHaveLength(0);
+    });
+
+    it("replaces only the edited token and preserves its suffix", () => {
+        const query = "aaa !user:1111 bbb has:image";
+        const token = searchBox.segments(query).find(segment => segment.token)!;
+        expect(searchBox.replaceRange(query, token, "!user:2222")).toBe("aaa !user:2222 bbb has:image");
+        expect(searchBox.wordAt("aaa user:1111 bbb", 10)).toEqual({ start: 4, end: 13 });
     });
 });

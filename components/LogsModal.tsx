@@ -23,6 +23,7 @@ import { LoggedAttachment, LoggedMessageJSON } from "../types";
 import { getGuildIdByChannel, isImageAttachment } from "../utils";
 import { t, tabDisplayName } from "../utils/i18n";
 import logMessageModules from "../utils/logMessageModules";
+import messageNavigation from "../utils/messageNavigation";
 import searchIndex from "../utils/searchIndex";
 import { importLogs } from "../utils/settingsUtils";
 import { ClearLogsButton } from "./ClearLogsButton";
@@ -390,6 +391,7 @@ function LMessage({ record: source, isGroupStart, reset, addQueryToken }: LMessa
         closeAllModals();
         NavigationRouter.transitionTo(path);
     };
+    const jumpToMessage = () => jumpTo(messageNavigation.getMessagePath(record, guildId));
     const jumpToGuild = () => {
         if (guild == null) return;
         closeAllModals();
@@ -420,10 +422,7 @@ function LMessage({ record: source, isGroupStart, reset, addQueryToken }: LMessa
                             key="jump-to-message"
                             id="jump-to-message"
                             label={t("modal.menu.jump")}
-                            action={() => {
-                                NavigationRouter.transitionTo(`/channels/${ChannelStore.getChannel(message.channel_id)?.guild_id ?? "@me"}/${message.channel_id}${message.id ? "/" + message.id : ""}`);
-                                closeAllModals();
-                            }}
+                            action={jumpToMessage}
                         />
                         <Menu.MenuItem
                             key="open-user-profile"
@@ -509,7 +508,9 @@ function LMessage({ record: source, isGroupStart, reset, addQueryToken }: LMessa
                     </Menu.Menu>
                 );
             }}>
-        <div>
+        <div onClick={event => {
+            if (messageNavigation.shouldJump(event)) jumpToMessage();
+        }}>
             <div className={cl("msg-context")}>
                 {isDM ? (
                     <span

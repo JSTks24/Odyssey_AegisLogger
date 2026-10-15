@@ -14,8 +14,8 @@ import calendar from "../utils/calendar";
 import entityPool from "../utils/entityPool";
 import { getLocale, t } from "../utils/i18n";
 import { matchCandidates } from "../utils/idMatch";
-import { HAS_VALUES, parseQuery, QueryResult, removeQueryToken, tokenizeQuery, upsertQueryToken } from "../utils/parseQuery";
-import searchBox from "../utils/searchBox";
+import { HAS_VALUES, QueryResult } from "../utils/parseQuery";
+import searchBox, { type searchRange, type searchSegment } from "../utils/searchBox";
 import searchIndex from "../utils/searchIndex";
 import DateCalendar from "./DateCalendar";
 import { resolveId } from "./settings/resolveId";
@@ -213,16 +213,22 @@ export default function FilterBar({ query, onChange, onSubmit, placeholder, acti
     const dateFieldRef = useRef<HTMLDivElement | null>(null);
     const activeKindRef = useRef<PickKind | null>(null);
     const queryRef = useRef(query);
+    const externalChange = queryRef.current !== query;
     queryRef.current = query;
     const onChangeRef = useRef(onChange);
     onChangeRef.current = onChange;
     const onSubmitRef = useRef(onSubmit);
     onSubmitRef.current = onSubmit;
     const composingRef = useRef(false);
+    const [typingRange, setTypingRange] = useState<searchRange | null>(null);
+    const pickRangeRef = useRef<(searchRange & { prefix: string }) | null>(null);
+    const pendingCaretRef = useRef<number | null>(null);
+    const caretRef = useRef(query.length);
+    const [allSelected, setAllSelected] = useState(false);
+    const allSelectedRef = useRef(false);
     const [selectedToken, setSelectedToken] = useState<number | null>(null);
     const selectedTokenRef = useRef<number | null>(null);
     const editRawRef = useRef<string | null>(null);
-    const activeNegateRef = useRef(false);
     const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
     const highlightRef = useRef(-1);
     const itemsRef = useRef<PanelItem[]>([]);
@@ -231,6 +237,36 @@ export default function FilterBar({ query, onChange, onSubmit, placeholder, acti
     const keepPanelOpen = () => {
         if (closeTimer.current != null) clearTimeout(closeTimer.current);
     };
+    const clearSelection = () => {
+        selectedTokenRef.current = null;
+        setSelectedToken(null);
+        allSelectedRef.current = false;
+        setAllSelected(false);
+    };
+    const focusAt = (offset: number) => {
+        const inputs = boxRef.current?.querySelectorAll<HTMLInputElement>("input[data-text-start]");
+        if (!inputs?.length) return;
+        const input = Array.from(inputs).find(input => Number(input.dataset.textStart) <= offset && Number(input.dataset.textEnd) >= offset) ?? inputs[inputs.length - 1];
+        const position = Math.max(0, Math.min(input.value.length, offset - Number(input.dataset.textStart)));
+        input.focus();
+        input.setSelectionRange(position, position);
+        caretRef.current = Number(input.dataset.textStart) + position;
+    };
+    const updateQuery = (next: string, caret: number, editing: searchRange | null = null) => {
+        clearSelection();
+        pendingCaretRef.current = caret;
+        caretRef.current = caret;
+        setTypingRange(editing);
+        queryRef.current = next;
+        onChangeRef.current(next);
+    };
+
+    useEffect(() => {
+        if (pendingCaretRef.current == null) return;
+        const offset = pendingCaretRef.current;
+        pendingCaretRef.current = null;
+        focusAt(offset);
+    });
 
     useEffect(() => {
         let cancelled = false;
@@ -259,12 +295,18 @@ export default function FilterBar({ query, onChange, onSubmit, placeholder, acti
     useEffect(() => {
         selectedTokenRef.current = null;
         setSelectedToken(null);
+        if (externalChange) {
+            pickRangeRef.current = null;
+            editRawRef.current = null;
+            setTypingRange(null);
+            changeKind(null);
+            clearSelection();
+        }
     }, [query]);
 
     useEffect(() => {
-        const input = areaRef.current?.querySelector("input");
-        if (input && document.activeElement === input)
-            input.blur();
+        const input = document.activeElement;
+        if (input?.tagName === "INPUT" && areaRef.current?.contains(input)) (input as HTMLInputElement).blur();
     }, []);
 
     useEffect(() => {
@@ -283,7 +325,9 @@ export default function FilterBar({ query, onChange, onSubmit, placeholder, acti
         const handleBlur = () => {
             if (closeTimer.current != null) clearTimeout(closeTimer.current);
             closeTimer.current = setTimeout(() => {
-                cancelActivePick();
+                if (area.contains(document.activeElement) || panelRef.current?.contains(document.activeElement)) return;
+                cancelActivePick(false);
+                setTypingRange(null);
                 setCalendarOpen(false);
                 setPanelOpen(false);
                 changeKind(null);
@@ -295,6 +339,21 @@ export default function FilterBar({ query, onChange, onSubmit, placeholder, acti
             const inPanel = target != null && panelRef.current?.contains(target);
             if (!inArea && !inPanel) return;
             if (e.isComposing || e.keyCode === 229 || composingRef.current) return;
+
+            if (inArea && (e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "a") {
+                e.preventDefault();
+                allSelectedRef.current = true;
+                setAllSelected(true);
+                if (target?.tagName === "INPUT") (target as HTMLInputElement).select();
+                return;
+            }
+            if (allSelectedRef.current && (e.key === "Backspace" || e.key === "Delete")) {
+                e.preventDefault();
+                pickRangeRef.current = null;
+                changeKind(null);
+                updateQuery("", 0);
+                return;
+            }
 
             const token = target?.closest<HTMLElement>("[data-token-index]");
             if (token != null && (e.key === "Enter" || e.key === " ")) {
@@ -308,25 +367,41 @@ export default function FilterBar({ query, onChange, onSubmit, placeholder, acti
                 const selected = token != null ? Number(token.dataset.tokenIndex) : selectedTokenRef.current;
                 if (selected != null) {
                     e.preventDefault();
-                    const next = searchBox.removeTokenAt(queryRef.current, selected);
-                    selectedTokenRef.current = null;
-                    setSelectedToken(null);
-                    onChangeRef.current(next);
-                    boxRef.current?.querySelector("input")?.focus();
+                    const segment = searchBox.segments(queryRef.current).filter(segment => segment.token)[selected];
+                    if (segment) deleteSegment(segment);
                     return;
                 }
                 const input = target as HTMLInputElement;
-                if (e.key !== "Backspace" || input.tagName !== "INPUT" || input.value !== "" || input.selectionStart !== 0) return;
-                const kind = activeKindRef.current;
-                const split = kind != null ? searchBox.splitActiveToken(queryRef.current, kind) : null;
-                const leading = searchBox.splitLeadingTokens(queryRef.current);
-                if (split != null) {
+                if (input.tagName !== "INPUT" || input.selectionStart !== input.selectionEnd) return;
+                const start = Number(input.dataset.textStart);
+                const end = Number(input.dataset.textEnd);
+                const backward = e.key === "Backspace";
+                if (backward ? input.selectionStart !== 0 : input.selectionEnd !== input.value.length) return;
+                const adjacent = searchBox.segments(queryRef.current).find(segment => segment.token && (backward ? segment.end === start : segment.start === end));
+                if (adjacent) {
                     e.preventDefault();
-                    onChangeRef.current(split.head.trimEnd());
-                    changeKind(null);
-                } else if (leading.tokens.length > 0) {
+                    deleteSegment(adjacent);
+                }
+                return;
+            }
+
+            if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
+                const backward = e.key === "ArrowLeft";
+                if (token != null) {
                     e.preventDefault();
-                    onChangeRef.current(searchBox.removeTokenAt(queryRef.current, leading.tokens.length - 1));
+                    const segment = searchBox.segments(queryRef.current).filter(segment => segment.token)[Number(token.dataset.tokenIndex)];
+                    if (segment) focusAt(backward ? segment.start : segment.end);
+                    clearSelection();
+                    return;
+                }
+                const input = target as HTMLInputElement;
+                if (input.tagName !== "INPUT" || input.selectionStart !== input.selectionEnd || e.shiftKey) return;
+                if (backward ? input.selectionStart !== 0 : input.selectionEnd !== input.value.length) return;
+                const offset = Number(backward ? input.dataset.textStart : input.dataset.textEnd);
+                const adjacent = searchBox.segments(queryRef.current).find(segment => segment.token && (backward ? segment.end === offset : segment.start === offset));
+                if (adjacent) {
+                    e.preventDefault();
+                    boxRef.current?.querySelector<HTMLElement>(`[data-token-start="${adjacent.start}"]`)?.focus();
                 }
                 return;
             }
@@ -362,8 +437,11 @@ export default function FilterBar({ query, onChange, onSubmit, placeholder, acti
                 if (value !== queryRef.current) onChangeRef.current(value);
                 if (closeTimer.current != null) clearTimeout(closeTimer.current);
                 editRawRef.current = null;
+                pickRangeRef.current = null;
+                setTypingRange(null);
                 changeKind(null);
                 setPanelOpen(false);
+                pendingCaretRef.current = value.length;
                 onSubmitRef.current(value);
                 return;
             }
@@ -421,27 +499,59 @@ export default function FilterBar({ query, onChange, onSubmit, placeholder, acti
         };
     }, [panelOpen]);
 
+    const placeToken = (kind: FilterKind, raw: string, negate = false, existing?: searchSegment) => {
+        const base = queryRef.current;
+        const current = existing ?? (kind === "has" ? undefined : searchBox.segments(base).find(segment => segment.token && (CANONICAL_KIND[segment.token.key] ?? segment.token.key) === kind && segment.token.negate === negate));
+        const position = Math.max(0, Math.min(caretRef.current, base.length));
+        const range = current ?? { start: position, end: position };
+        const before = !current && position > 0 && base[position - 1] !== " " ? " " : "";
+        const after = !current && position < base.length && base[position] !== " " ? " " : "";
+        const next = searchBox.replaceRange(base, range, before + raw + after);
+        const start = range.start + before.length;
+        return { next, start, end: start + raw.length };
+    };
     const applyToken = (kind: FilterKind, value: string, negate = false) => {
-        onChange(upsertQueryToken(query, kind, `${negate ? "!" : ""}${kind}:${value}`, negate, kind === "has"));
+        const placed = placeToken(kind, `${negate ? "!" : ""}${kind}:${value}`, negate);
+        updateQuery(placed.next, placed.end);
         changeKind(null);
     };
 
-    const cancelActivePick = () => {
-        const kind = activeKindRef.current;
+    const cancelActivePick = (restoreFocus = true) => {
         let base = queryRef.current;
-        if (kind === "user" || kind === "server" || kind === "channel") {
-            base = searchBox.cancelPick(queryRef.current, kind, editRawRef.current);
-            if (base !== queryRef.current) onChangeRef.current(base);
+        const range = pickRangeRef.current;
+        if (range) {
+            base = editRawRef.current == null ? searchBox.removeRange(base, range) : searchBox.replaceRange(base, range, editRawRef.current);
+            pickRangeRef.current = null;
+            updateQuery(base, Math.min(range.start, base.length));
+            if (!restoreFocus) pendingCaretRef.current = null;
         }
         editRawRef.current = null;
         return base;
     };
-    const applyPick = (kind: PickKind, value: string) => {
-        const negate = activeNegateRef.current;
-        const split = searchBox.splitActiveToken(query, kind);
-        const cleaned = split != null ? split.head.trimEnd() : query;
-        onChange(upsertQueryToken(cleaned, kind, `${negate ? "!" : ""}${kind}:${value}`, negate, kind === "has"));
+    const applyPick = (value: string) => {
+        const range = pickRangeRef.current;
+        if (!range) return;
+        const raw = range.prefix + value;
+        const next = searchBox.replaceRange(queryRef.current, range, raw);
+        pickRangeRef.current = null;
+        editRawRef.current = null;
+        updateQuery(next, range.start + raw.length);
         changeKind(null);
+    };
+    const deleteSegment = (segment: searchSegment) => {
+        const pick = pickRangeRef.current;
+        const distance = pick && segment.start >= pick.end ? queryRef.current.length - segment.start : null;
+        if (pick && segment.start < pick.end && segment.end > pick.start) {
+            pickRangeRef.current = null;
+            editRawRef.current = null;
+        } else cancelActivePick(false);
+        if (distance != null) {
+            const start = queryRef.current.length - distance;
+            segment = { ...segment, start, end: start + segment.raw.length };
+        }
+        changeKind(null);
+        const next = searchBox.removeRange(queryRef.current, segment);
+        updateQuery(next, Math.min(segment.start, next.length));
     };
     const changeKind = (kind: PickKind | null) => {
         setActiveKind(kind);
@@ -452,11 +562,14 @@ export default function FilterBar({ query, onChange, onSubmit, placeholder, acti
         highlightRef.current = -1;
     };
     const startPick = (kind: "user" | "server" | "channel") => {
-        const current = tokenizeQuery(queryRef.current).queries.find(q => (CANONICAL_KIND[q.key] ?? q.key) === kind && !q.negate);
+        cancelActivePick();
+        const current = searchBox.segments(queryRef.current).find(segment => segment.token && (CANONICAL_KIND[segment.token.key] ?? segment.token.key) === kind && !segment.token.negate);
         editRawRef.current = current?.raw ?? null;
-        activeNegateRef.current = false;
         setActiveNegate(false);
-        onChangeRef.current(upsertQueryToken(queryRef.current, kind, `${kind}:`));
+        const prefix = `${kind}:`;
+        const placed = placeToken(kind, prefix, false, current);
+        pickRangeRef.current = { start: placed.start, end: placed.end, prefix };
+        updateQuery(placed.next, placed.end, pickRangeRef.current);
         changeKind(kind);
     };
 
@@ -470,8 +583,18 @@ export default function FilterBar({ query, onChange, onSubmit, placeholder, acti
     const commitDate = (kind: "before" | "after", value: string) => {
         setDateKind(kind);
         setDateValue(value);
-        const base = dateScope != null ? searchBox.removeTokens(query, [dateScope]) : query;
-        onChange(upsertQueryToken(base, kind, `${kind}:${value}`));
+        const existing = searchBox.segments(queryRef.current).find(segment => segment.token?.key === (dateScope ?? kind));
+        const placed = placeToken(kind, `${kind}:${value}`, false, existing);
+        let { next } = placed;
+        let caret = placed.end;
+        const duplicates = searchBox.segments(next).filter(segment => segment.token?.key === kind && !segment.token.negate && segment.start !== placed.start).reverse();
+        for (const duplicate of duplicates) {
+            const reduced = searchBox.removeRange(next, duplicate);
+            if (duplicate.start < placed.start) caret -= next.length - reduced.length;
+            next = reduced;
+        }
+        updateQuery(next, caret);
+        setDateScope(kind);
     };
 
     const addDate = () => commitDate(dateKind, calendar.todayISO());
@@ -479,7 +602,8 @@ export default function FilterBar({ query, onChange, onSubmit, placeholder, acti
     const removeDate = () => {
         setDateValue("");
         setCalendarOpen(false);
-        onChange(searchBox.removeTokens(query, [dateScope ?? dateKind]));
+        const next = searchBox.removeTokens(queryRef.current, [dateScope ?? dateKind]);
+        updateQuery(next, next.length);
     };
 
     const toggleCalendar = () => {
@@ -515,19 +639,25 @@ export default function FilterBar({ query, onChange, onSubmit, placeholder, acti
         }
     ];
 
-    const editToken = (kind: PickKind, current?: QueryResult) => {
-        const base = cancelActivePick();
+    const editToken = (kind: PickKind, segment: searchSegment) => {
+        const previous = pickRangeRef.current;
+        const distance = previous && segment.start >= previous.end ? queryRef.current.length - segment.start : null;
+        cancelActivePick();
+        if (distance != null) {
+            const start = queryRef.current.length - distance;
+            segment = { ...segment, start, end: start + segment.raw.length };
+        }
+        const current = segment.token!;
         if (kind === "before" || kind === "after") {
             openDateEditor(current);
             return;
         }
-        const value = current?.value ?? "";
         const negate = current?.negate ?? false;
-        const stripped = current ? removeQueryToken(base, current.raw) : base;
-        onChange((stripped ? stripped + " " : "") + `${negate ? "!" : ""}${kind}:${value}`);
-        editRawRef.current = current?.raw ?? null;
-        activeNegateRef.current = negate;
+        const prefix = `${negate ? "!" : ""}${current.key}:`;
+        pickRangeRef.current = { start: segment.start, end: segment.end, prefix };
+        editRawRef.current = current.raw;
         setActiveNegate(negate);
+        updateQuery(queryRef.current, segment.end, pickRangeRef.current);
         changeKind(kind);
     };
 
@@ -539,19 +669,32 @@ export default function FilterBar({ query, onChange, onSubmit, placeholder, acti
     );
     const isDate = activeKind === "date";
     const isEntity = activeKind === "user" || activeKind === "server" || activeKind === "channel";
-    const activeSplit = isEntity ? searchBox.splitActiveToken(query, activeKind!) : null;
-    const { tokens, rest } = searchBox.splitLeadingTokens(activeSplit != null ? activeSplit.head : query);
-    const boxRest = activeSplit != null ? activeSplit.rest : rest;
-    const setRest = (value: string) => {
+    const activeRange = isEntity ? pickRangeRef.current : null;
+    const segments = searchBox.segments(query, activeRange ?? typingRange);
+    const tokens = searchBox.segments(query).filter(segment => segment.token);
+    const adjustPick = (range: searchRange, difference: number, insidePick = false) => {
+        const pick = pickRangeRef.current;
+        if (!pick || !insidePick && range.start >= pick.end) return;
+        if (insidePick) { pick.end += difference; return; }
+        if (range.end <= pick.start) pick.start += difference;
+        pick.end += difference;
+    };
+    const setText = (segment: searchSegment, input: HTMLInputElement) => {
+        const { value } = input;
+        const range = allSelectedRef.current ? { start: 0, end: queryRef.current.length } : segment;
+        const next = searchBox.replaceRange(queryRef.current, range, value);
+        const caret = range.start + (input.selectionStart ?? value.length);
+        if (allSelectedRef.current) {
+            pickRangeRef.current = null;
+            editRawRef.current = null;
+            changeKind(null);
+        } else adjustPick(range, value.length - (range.end - range.start), input.dataset.pickInput === "true");
+        const active = pickRangeRef.current;
         highlightRef.current = -1;
         setHighlightIndex(-1);
-        selectedTokenRef.current = null;
-        setSelectedToken(null);
-        onChange(activeSplit != null
-            ? activeSplit.head + activeSplit.prefix + value
-            : searchBox.composeSearchBox(tokens, value));
+        updateQuery(next, caret, active ?? (composingRef.current ? { start: range.start, end: range.start + value.length } : searchBox.wordAt(next, caret)));
     };
-    const filterText = activeSplit != null ? activeSplit.rest : "";
+    const filterText = activeRange ? query.slice(activeRange.start + activeRange.prefix.length, activeRange.end) : "";
     const candidates = useMemo(
         () => (filterText.trim() ? matchCandidates(filterText, pool, 8) : pool.slice(0, 8)),
         [filterText, pool]
@@ -642,7 +785,7 @@ export default function FilterBar({ query, onChange, onSubmit, placeholder, acti
     const entityItems: PanelItem[] = [
         ...candidates.map(candidate => ({
             key: `c-${candidate.id}`,
-            action: () => applyPick(activeKind!, candidate.id),
+            action: () => applyPick(candidate.id),
             render: (active: boolean) => (
                 <FilterRow
                     active={active}
@@ -655,7 +798,7 @@ export default function FilterBar({ query, onChange, onSubmit, placeholder, acti
         })),
         ...(rawIdMissing ? [{
             key: "raw-id",
-            action: () => applyPick(activeKind!, rawId!),
+            action: () => applyPick(rawId!),
             render: (active: boolean) => (
                 <FilterRow active={active} icon={entityIcon(rawId!)} main={rawId!} sub={t("settings.unknownId")} plainSub />
             )
@@ -680,29 +823,104 @@ export default function FilterBar({ query, onChange, onSubmit, placeholder, acti
 
     itemsRef.current = panelItems;
 
+    const rememberCaret = (event: React.SyntheticEvent<HTMLInputElement>) => {
+        const input = event.currentTarget;
+        caretRef.current = Number(input.dataset.textStart) + (input.selectionStart ?? 0);
+    };
+    const renderInput = (segment: searchSegment, key: string, last = false) => (
+        <input
+            key={key}
+            className={cl("search-input")}
+            data-text-start={segment.start}
+            data-text-end={segment.end}
+            data-pick-input={key === "pick" ? "true" : undefined}
+            value={segment.raw}
+            size={Math.max(1, segment.raw.replace(/[^\x00-\x7f]/g, "aa").length)}
+            style={{ flexGrow: last ? 1 : 0 }}
+            placeholder={query === "" ? placeholder : ""}
+            onChange={e => setText(segment, e.currentTarget)}
+            onSelect={rememberCaret}
+            onFocus={rememberCaret}
+            onCompositionStart={() => { composingRef.current = true; }}
+            onCompositionEnd={event => {
+                composingRef.current = false;
+                rememberCaret(event);
+                setTypingRange(searchBox.wordAt(queryRef.current, caretRef.current));
+            }}
+            onClick={event => {
+                rememberCaret(event);
+                clearSelection();
+            }}
+        />
+    );
+
     return (
         <div ref={areaRef} className={cl("filter-area")}>
             <div
                 ref={boxRef}
-                className={cl("search-box")}
+                className={cl("search-box") + (allSelected ? " " + cl("search-all-selected") : "")}
                 onMouseDown={e => {
-                    if (!(e.target as HTMLElement).closest("input")) e.preventDefault();
-                    boxRef.current?.querySelector("input")?.focus();
+                    if ((e.target as HTMLElement).closest("input, [data-token-index]")) return;
+                    e.preventDefault();
+                    focusAt(query.length);
+                }}
+                onCopy={event => {
+                    const selected = selectedTokenRef.current;
+                    const raw = allSelectedRef.current ? queryRef.current : selected != null ? tokens[selected]?.raw : null;
+                    if (raw == null) return;
+                    event.preventDefault();
+                    event.clipboardData.setData("text/plain", raw);
+                }}
+                onCut={event => {
+                    if (!allSelectedRef.current) return;
+                    event.preventDefault();
+                    event.clipboardData.setData("text/plain", queryRef.current);
+                    pickRangeRef.current = null;
+                    changeKind(null);
+                    updateQuery("", 0);
+                }}
+                onPaste={event => {
+                    const input = event.target as HTMLInputElement;
+                    const token = input.closest<HTMLElement>("[data-token-index]");
+                    if (input.tagName !== "INPUT" && token == null && !allSelectedRef.current) return;
+                    event.preventDefault();
+                    const start = Number(input.dataset.textStart);
+                    const range = allSelectedRef.current ? { start: 0, end: queryRef.current.length } : token ? tokens[Number(token.dataset.tokenIndex)] : { start: start + (input.selectionStart ?? 0), end: start + (input.selectionEnd ?? 0) };
+                    const text = event.clipboardData.getData("text/plain").replace(/[\r\n]+/g, " ");
+                    const next = searchBox.replaceRange(queryRef.current, range, text);
+                    if (allSelectedRef.current) {
+                        pickRangeRef.current = null;
+                        editRawRef.current = null;
+                        changeKind(null);
+                    } else adjustPick(range, text.length - (range.end - range.start), input.dataset.pickInput === "true");
+                    updateQuery(next, range.start + text.length, pickRangeRef.current);
                 }}
             >
-                {tokens.map((seg, i) => {
-                    const parsed = parseQuery(seg);
-                    if (typeof parsed === "string")
-                        return null;
+                {segments.map((segment, index) => {
+                    const parsed = segment.token;
+                    if (!parsed) {
+                        if (activeRange && segment.start <= activeRange.start && segment.end >= activeRange.end) {
+                            const start = activeRange.start + activeRange.prefix.length;
+                            return <React.Fragment key={`text-${index}`}>
+                                {renderInput({ start: segment.start, end: activeRange.start, raw: query.slice(segment.start, activeRange.start) }, "before")}
+                                <span className={cl("search-token", "search-token-active")}><b>{chipLabel(activeKind!, activeNegate)}:</b></span>
+                                {renderInput({ start, end: activeRange.end, raw: query.slice(start, activeRange.end) }, "pick", activeRange.end === query.length)}
+                                {activeRange.end < segment.end && renderInput({ start: activeRange.end, end: segment.end, raw: query.slice(activeRange.end, segment.end) }, "after", index === segments.length - 1)}
+                            </React.Fragment>;
+                        }
+                        return renderInput(segment, `text-${index}`, index === segments.length - 1);
+                    }
+                    const i = tokens.findIndex(token => token.start === segment.start);
                     const kind = CANONICAL_KIND[parsed.key];
                     const editable = kind != null && EDITABLE_KEYS.has(parsed.key);
                     return (
                         <span
-                            key={`${i}-${seg}`}
+                            key={`token-${index}`}
                             className={cl("search-token") + (editable ? " " + cl("search-token-editable") : "") + (selectedToken === i ? " " + cl("search-token-selected") : "")}
                             role="button"
                             tabIndex={0}
                             data-token-index={i}
+                            data-token-start={segment.start}
                             aria-pressed={selectedToken === i}
                             onFocus={() => {
                                 selectedTokenRef.current = i;
@@ -712,7 +930,7 @@ export default function FilterBar({ query, onChange, onSubmit, placeholder, acti
                                 if (editable && kind) {
                                     selectedTokenRef.current = null;
                                     setSelectedToken(null);
-                                    editToken(kind, parsed);
+                                    editToken(kind, segment);
                                 } else {
                                     selectedTokenRef.current = i;
                                     setSelectedToken(i);
@@ -726,23 +944,6 @@ export default function FilterBar({ query, onChange, onSubmit, placeholder, acti
                         </span>
                     );
                 })}
-                {activeSplit != null && (
-                    <span className={cl("search-token", "search-token-active")}>
-                        <b>{chipLabel(activeKind!, activeNegate)}:</b>
-                    </span>
-                )}
-                <input
-                    className={cl("search-input")}
-                    value={boxRest}
-                    placeholder={tokens.length === 0 && activeSplit == null ? placeholder : ""}
-                    onChange={e => setRest(e.currentTarget.value)}
-                    onCompositionStart={() => { composingRef.current = true; }}
-                    onCompositionEnd={() => { composingRef.current = false; }}
-                    onClick={() => {
-                        selectedTokenRef.current = null;
-                        setSelectedToken(null);
-                    }}
-                />
             </div>
             {panelOpen && anchor != null && ReactDOM.createPortal(
                 <div

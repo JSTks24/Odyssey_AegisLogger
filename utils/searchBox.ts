@@ -4,42 +4,48 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
-import { parseQuery } from "./parseQuery";
+import { parseQuery, type QueryResult } from "./parseQuery";
 
-function splitActiveToken(query: string, kind: string): { head: string; rest: string; prefix: string; } | null {
-    const marker = `${kind}:`;
-    let start = -1;
-    let prefixLen = marker.length;
-    let from = 0;
+export interface searchRange {
+    start: number;
+    end: number;
+}
 
-    while (true) {
-        const i = query.indexOf(marker, from);
-        if (i < 0) break;
-        let s = -1;
-        if (i === 0 || query[i - 1] === " ") s = i;
-        else if (query[i - 1] === "!" && (i === 1 || query[i - 2] === " ")) s = i - 1;
-        if (s >= 0) {
-            start = s;
-            prefixLen = s === i ? marker.length : marker.length + 1;
-        }
-        from = i + 1;
+export interface searchSegment extends searchRange {
+    raw: string;
+    token?: QueryResult;
+}
+
+function segments(query: string, editing?: searchRange | null): searchSegment[] {
+    const result: searchSegment[] = [];
+    let start = 0;
+    for (const match of query.matchAll(/[^ ]+/g)) {
+        const from = match.index!;
+        const end = from + match[0].length;
+        if (editing && from < editing.end && end > editing.start) continue;
+        const token = parseQuery(match[0]);
+        if (typeof token === "string") continue;
+        result.push({ start, end: from, raw: query.slice(start, from) });
+        result.push({ start: from, end, raw: match[0], token });
+        start = end;
     }
-
-    if (start < 0) return null;
-    return { head: query.slice(0, start), rest: query.slice(start + prefixLen), prefix: query.slice(start, start + prefixLen) };
+    result.push({ start, end: query.length, raw: query.slice(start) });
+    return result;
 }
 
-function splitLeadingTokens(query: string): { tokens: string[]; rest: string; } {
-    const parts = query.split(" ");
-    let count = 0;
-
-    while (count < parts.length && typeof parseQuery(parts[count]) !== "string") count++;
-
-    return { tokens: parts.slice(0, count), rest: parts.slice(count).join(" ") };
+function wordAt(query: string, caret: number): searchRange {
+    const end = query.indexOf(" ", caret);
+    return { start: caret <= 0 ? 0 : query.lastIndexOf(" ", caret - 1) + 1, end: end < 0 ? query.length : end };
 }
 
-function composeSearchBox(tokens: string[], rest: string) {
-    return [...tokens, rest].join(" ");
+function replaceRange(query: string, range: searchRange, value: string) {
+    return query.slice(0, range.start) + value + query.slice(range.end);
+}
+
+function removeRange(query: string, range: searchRange) {
+    const before = query.slice(0, range.start);
+    const after = query.slice(range.end);
+    return (before.endsWith(" ") && after.startsWith(" ") ? before.slice(0, -1) + after : before + after).trim();
 }
 
 function removeTokens(query: string, keys: string[]) {
@@ -53,31 +59,16 @@ function removeTokens(query: string, keys: string[]) {
         .trim();
 }
 
-function cancelPick(query: string, kind: string, editRaw: string | null) {
-    const split = splitActiveToken(query, kind);
-    if (split == null) return query;
-    if (editRaw == null) return split.head.trimEnd();
-    const restored = (split.head.trimEnd() + " " + editRaw).trim();
-    return restored === query ? query : restored;
-}
-
-function removeTokenAt(query: string, index: number) {
-    const { tokens, rest } = splitLeadingTokens(query);
-    if (index < 0 || index >= tokens.length) return query;
-    return composeSearchBox(tokens.filter((_token, position) => position !== index), rest).trim();
-}
-
 function prepareSubmission(query: string) {
     return query.split(" ").filter(part => !/^!?(?:user|from|channel|in|server|guild|has|before|after|during|near|around|message):$/.test(part)).join(" ").trim();
 }
 
 const searchBox = {
-    splitActiveToken,
-    splitLeadingTokens,
-    composeSearchBox,
+    segments,
+    wordAt,
+    replaceRange,
+    removeRange,
     removeTokens,
-    cancelPick,
-    removeTokenAt,
     prepareSubmission
 };
 
