@@ -42,6 +42,23 @@ function replaceRange(query: string, range: searchRange, value: string) {
     return query.slice(0, range.start) + value + query.slice(range.end);
 }
 
+function replaceText(query: string, range: searchRange, value: string, caret = value.length, tokens: searchRange[] = segments(query).filter(segment => segment.token)) {
+    const before = tokens.some(token => token.end === range.start);
+    const after = tokens.some(token => token.start === range.end);
+    if (range.start === 0 && after && value.trim() === "") {
+        value = "";
+        caret = 0;
+    }
+    const prefix = before && value !== "" && !value.startsWith(" ") ? " " : "";
+    const suffix = after && (value !== "" ? !value.endsWith(" ") : before) ? " " : "";
+    const text = prefix + value + suffix;
+    return {
+        query: replaceRange(query, range, text),
+        caret: range.start + prefix.length + caret,
+        length: text.length
+    };
+}
+
 function removeRange(query: string, range: searchRange) {
     const before = query.slice(0, range.start);
     const after = query.slice(range.end);
@@ -67,6 +84,7 @@ const searchBox = {
     segments,
     wordAt,
     replaceRange,
+    replaceText,
     removeRange,
     removeTokens,
     prepareSubmission

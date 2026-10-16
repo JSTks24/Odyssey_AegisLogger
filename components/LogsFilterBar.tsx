@@ -220,6 +220,7 @@ export default function FilterBar({ query, onChange, onSubmit, placeholder, acti
     const onSubmitRef = useRef(onSubmit);
     onSubmitRef.current = onSubmit;
     const composingRef = useRef(false);
+    const composingInputRef = useRef<{ key: string; value: string; } | null>(null);
     const [typingRange, setTypingRange] = useState<searchRange | null>(null);
     const pickRangeRef = useRef<(searchRange & { prefix: string }) | null>(null);
     const pendingCaretRef = useRef<number | null>(null);
@@ -262,7 +263,7 @@ export default function FilterBar({ query, onChange, onSubmit, placeholder, acti
     };
 
     useEffect(() => {
-        if (pendingCaretRef.current == null) return;
+        if (pendingCaretRef.current == null || composingRef.current || externalChange) return;
         const offset = pendingCaretRef.current;
         pendingCaretRef.current = null;
         focusAt(offset);
@@ -296,6 +297,9 @@ export default function FilterBar({ query, onChange, onSubmit, placeholder, acti
         selectedTokenRef.current = null;
         setSelectedToken(null);
         if (externalChange) {
+            composingRef.current = false;
+            composingInputRef.current = null;
+            pendingCaretRef.current = null;
             pickRangeRef.current = null;
             editRawRef.current = null;
             setTypingRange(null);
@@ -499,6 +503,25 @@ export default function FilterBar({ query, onChange, onSubmit, placeholder, acti
         };
     }, [panelOpen]);
 
+    useEffect(() => {
+        if (!panelOpen) return;
+        const box = boxRef.current;
+        if (!box) return;
+        const updateAnchor = () => {
+            const rect = box.getBoundingClientRect();
+            setAnchor(previous => previous?.top === rect.bottom && previous.left === rect.left && previous.width === rect.width ? previous : { top: rect.bottom, left: rect.left, width: rect.width });
+        };
+        const observer = new ResizeObserver(updateAnchor);
+        observer.observe(box);
+        window.addEventListener("resize", updateAnchor);
+        window.addEventListener("scroll", updateAnchor, true);
+        return () => {
+            observer.disconnect();
+            window.removeEventListener("resize", updateAnchor);
+            window.removeEventListener("scroll", updateAnchor, true);
+        };
+    }, [panelOpen]);
+
     const placeToken = (kind: FilterKind, raw: string, negate = false, existing?: searchSegment) => {
         const base = queryRef.current;
         const current = existing ?? (kind === "has" ? undefined : searchBox.segments(base).find(segment => segment.token && (CANONICAL_KIND[segment.token.key] ?? segment.token.key) === kind && segment.token.negate === negate));
@@ -679,20 +702,28 @@ export default function FilterBar({ query, onChange, onSubmit, placeholder, acti
         if (range.end <= pick.start) pick.start += difference;
         pick.end += difference;
     };
+    const replaceText = (range: searchRange, value: string, caret: number, insidePick: boolean) => {
+        const boundaries: searchRange[] = segments.filter(segment => segment.token);
+        if (activeRange && !insidePick) boundaries.push(activeRange);
+        return searchBox.replaceText(queryRef.current, range, value, caret, boundaries);
+    };
     const setText = (segment: searchSegment, input: HTMLInputElement) => {
         const { value } = input;
         const range = allSelectedRef.current ? { start: 0, end: queryRef.current.length } : segment;
-        const next = searchBox.replaceRange(queryRef.current, range, value);
-        const caret = range.start + (input.selectionStart ?? value.length);
+        const replaced = replaceText(range, value, input.selectionStart ?? value.length, input.dataset.pickInput === "true");
+        const next = replaced.query;
+        const { caret } = replaced;
+        if (composingInputRef.current) composingInputRef.current.value = value;
         if (allSelectedRef.current) {
             pickRangeRef.current = null;
             editRawRef.current = null;
             changeKind(null);
-        } else adjustPick(range, value.length - (range.end - range.start), input.dataset.pickInput === "true");
+        } else adjustPick(range, replaced.length - (range.end - range.start), input.dataset.pickInput === "true");
         const active = pickRangeRef.current;
         highlightRef.current = -1;
         setHighlightIndex(-1);
-        updateQuery(next, caret, active ?? (composingRef.current ? { start: range.start, end: range.start + value.length } : searchBox.wordAt(next, caret)));
+        const word = searchBox.wordAt(next, caret);
+        updateQuery(next, caret, active ?? { start: Math.max(range.start, word.start), end: Math.min(range.start + replaced.length, word.end) });
     };
     const filterText = activeRange ? query.slice(activeRange.start + activeRange.prefix.length, activeRange.end) : "";
     const candidates = useMemo(
@@ -834,18 +865,22 @@ export default function FilterBar({ query, onChange, onSubmit, placeholder, acti
             data-text-start={segment.start}
             data-text-end={segment.end}
             data-pick-input={key === "pick" ? "true" : undefined}
-            value={segment.raw}
+            value={!externalChange && composingInputRef.current?.key === key ? composingInputRef.current.value : segment.raw}
             size={Math.max(1, segment.raw.replace(/[^\x00-\x7f]/g, "aa").length)}
-            style={{ flexGrow: last ? 1 : 0 }}
+            style={{ flexGrow: last ? 1 : 0, width: segment.raw === "" ? 1 : undefined, position: segment.raw === "" && !last ? "absolute" : undefined }}
             placeholder={query === "" ? placeholder : ""}
             onChange={e => setText(segment, e.currentTarget)}
             onSelect={rememberCaret}
             onFocus={rememberCaret}
-            onCompositionStart={() => { composingRef.current = true; }}
-            onCompositionEnd={event => {
+            onCompositionStart={event => {
+                composingRef.current = true;
+                composingInputRef.current = { key, value: event.currentTarget.value };
+            }}
+            onCompositionEnd={() => {
                 composingRef.current = false;
-                rememberCaret(event);
-                setTypingRange(searchBox.wordAt(queryRef.current, caretRef.current));
+                composingInputRef.current = null;
+                const word = searchBox.wordAt(queryRef.current, caretRef.current);
+                setTypingRange({ start: Math.max(segment.start, word.start), end: Math.min(segment.end, word.end) });
             }}
             onClick={event => {
                 rememberCaret(event);
@@ -862,7 +897,8 @@ export default function FilterBar({ query, onChange, onSubmit, placeholder, acti
                 onMouseDown={e => {
                     if ((e.target as HTMLElement).closest("input, [data-token-index]")) return;
                     e.preventDefault();
-                    focusAt(query.length);
+                    const firstToken = boxRef.current?.querySelector<HTMLElement>("[data-token-index], .aegis-modal-search-token-active");
+                    focusAt(firstToken && e.clientX < firstToken.getBoundingClientRect().left ? 0 : query.length);
                 }}
                 onCopy={event => {
                     const selected = selectedTokenRef.current;
@@ -887,13 +923,13 @@ export default function FilterBar({ query, onChange, onSubmit, placeholder, acti
                     const start = Number(input.dataset.textStart);
                     const range = allSelectedRef.current ? { start: 0, end: queryRef.current.length } : token ? tokens[Number(token.dataset.tokenIndex)] : { start: start + (input.selectionStart ?? 0), end: start + (input.selectionEnd ?? 0) };
                     const text = event.clipboardData.getData("text/plain").replace(/[\r\n]+/g, " ");
-                    const next = searchBox.replaceRange(queryRef.current, range, text);
+                    const replaced = replaceText(range, text, text.length, input.dataset.pickInput === "true");
                     if (allSelectedRef.current) {
                         pickRangeRef.current = null;
                         editRawRef.current = null;
                         changeKind(null);
-                    } else adjustPick(range, text.length - (range.end - range.start), input.dataset.pickInput === "true");
-                    updateQuery(next, range.start + text.length, pickRangeRef.current);
+                    } else adjustPick(range, replaced.length - (range.end - range.start), input.dataset.pickInput === "true");
+                    updateQuery(replaced.query, replaced.caret, pickRangeRef.current);
                 }}
             >
                 {segments.map((segment, index) => {

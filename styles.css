@@ -284,12 +284,14 @@
 }
 
 .aegis-modal-search-box {
+    position: relative;
     display: flex;
     flex-wrap: wrap;
     align-items: center;
-    gap: 6px;
+    gap: 4px 0;
     width: 100%;
-    padding: 8px 10px;
+    min-height: 32px;
+    padding: 4px 6px;
     border-radius: 8px;
     background: var(--background-base-lowest, rgba(0, 0, 0, 0.05));
     border: 1px solid transparent;
@@ -302,14 +304,18 @@
 }
 
 .aegis-modal-search-input {
+    field-sizing: content;
     flex: 0 1 auto;
-    min-width: 1ch;
+    min-width: 0;
     max-width: 100%;
     background: transparent;
     border: none;
     outline: none;
     color: var(--text-default);
     font-size: 14px;
+    font-family: inherit;
+    font-weight: 500;
+    line-height: 22px;
     padding: 0;
 }
 
@@ -317,10 +323,14 @@
     display: inline-flex;
     align-items: center;
     gap: 4px;
-    padding: 2px 6px;
+    min-height: 22px;
+    padding: 0 4px;
+    box-sizing: border-box;
+    border: 1px solid transparent;
     border-radius: 4px;
-    font-size: 13px;
-    font-weight: 600;
+    font-size: 14px;
+    font-weight: 500;
+    line-height: 20px;
     background: color-mix(in srgb, var(--interactive-accent, #5865f2) 15%, transparent);
     color: var(--text-link, #00a8fc);
     user-select: none;
@@ -333,7 +343,8 @@
 }
 
 .aegis-modal-search-token b {
-    font-weight: 700;
+    font-weight: 600;
+    flex-shrink: 0;
 }
 
 .aegis-modal-search-token-active {
@@ -346,13 +357,13 @@
 
 .aegis-modal-search-token-body {
     display: inline-flex;
-    align-items: center;
+    align-items: baseline;
     gap: 4px;
     min-width: 0;
 }
 
 .aegis-modal-search-token-editable .aegis-modal-search-token-body:hover {
-    text-decoration: underline;
+    color: var(--text-link, #00a8fc);
 }
 
 .aegis-modal-search-token-selected,
@@ -369,6 +380,7 @@
 
 .aegis-modal-filter-panel {
     position: fixed;
+    box-sizing: border-box;
     transition: opacity 120ms ease;
     display: flex;
     flex-direction: column;
@@ -376,7 +388,7 @@
     padding: 8px;
     background: var(--background-base-low, #fff);
     border: 1px solid var(--background-base-lowest, rgba(0, 0, 0, 0.1));
-    border-radius: 12px;
+    border-radius: 8px;
     box-shadow: var(--shadow-high, 0 8px 16px rgba(0, 0, 0, 0.24));
     max-height: 320px;
     overflow-y: auto;
@@ -400,13 +412,15 @@
 
 .aegis-modal-filter-item-main {
     color: var(--text-default);
-    font-size: 15px;
-    font-weight: 600;
+    font-size: 14px;
+    font-weight: 500;
+    overflow-wrap: anywhere;
 }
 
 .aegis-modal-filter-item-sub {
     color: var(--text-muted);
-    font-size: 12px;
+    font-size: 14px;
+    overflow-wrap: anywhere;
 }
 
 .aegis-modal-filter-item-sub b {
