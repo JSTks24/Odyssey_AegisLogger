@@ -43,6 +43,7 @@ import idb, { DBMessageStatus } from "../db";
 import { settings } from "../index";
 import { flushWrites } from "../LoggedMessageManager";
 import messageHandlers, { cacheSentMessages } from "../messageHandlers";
+import { isGhostPinged } from "../utils";
 import { cacheMessageImages } from "../utils/saveImage";
 
 const tick = () => new Promise(resolve => setTimeout(resolve, 0));
@@ -76,6 +77,105 @@ beforeEach(() => {
     cacheSentMessages.clear();
     messageHandlers.setCacheLimit(1000);
     messageHandlers.setGetMessage(null);
+    settings.store.logDeletes = true;
+    settings.store.logEdits = true;
+    settings.store.logDeletedAttachments = true;
+    vi.mocked(isGhostPinged).mockReturnValue(false);
+});
+
+describe("recording switches", () => {
+    it.each([false, true])("blocks cached deletion and ghost ping recording before fallback when logDeletes is false (%s)", async ghostPinged => {
+        const { order } = trackWrites();
+        const current = makeMessage("switch-delete", { deleted: true });
+        const getMessage = vi.fn(() => current);
+        cacheSentMessages.set("100,switch-delete", current);
+        messageHandlers.setGetMessage(getMessage);
+        vi.mocked(isGhostPinged).mockReturnValue(ghostPinged);
+        settings.store.logDeletes = false;
+
+        await messageHandlers.messageDeleteHandler({ channelId: "100", id: current.id } as any);
+        await messageHandlers.messageDeleteBulkHandler({ channelId: "100", ids: [current.id] } as any);
+
+        expect(order).toEqual([]);
+        expect(getMessage).not.toHaveBeenCalled();
+        expect(idb.getMessageIDB).not.toHaveBeenCalled();
+    });
+
+    it("updates the current cache without recording an edit or reading the archive when logEdits is false", async () => {
+        const { order } = trackWrites();
+        const current = makeMessage("switch-edit");
+        cacheSentMessages.set("100,switch-edit", current);
+        settings.store.logEdits = false;
+
+        await messageHandlers.messageUpdateHandler({ message: { id: current.id, channel_id: "100", content: "edited", attachments: [] } } as any);
+
+        expect(order).toEqual([]);
+        expect(idb.getMessageIDB).not.toHaveBeenCalled();
+        expect(cacheSentMessages.get("100,switch-edit")).toMatchObject({ content: "edited", attachments: [] });
+        expect(cacheSentMessages.get("100,switch-edit")?.editHistory).toBeUndefined();
+        settings.store.logEdits = true;
+        await messageHandlers.messageDeleteHandler({ channelId: "100", id: current.id } as any);
+        expect(order).toHaveLength(1);
+        expect(order[0].message).toMatchObject({ content: "edited", attachments: [] });
+    });
+
+    it("rechecks edits after a pending archive read settles", async () => {
+        const { order } = trackWrites();
+        let release = (_value: any) => { };
+        vi.mocked(idb.getMessageIDB).mockImplementationOnce(() => new Promise(resolve => { release = resolve; }));
+        messageHandlers.setGetMessage(() => makeMessage("switch-pending", { editHistory: [{ content: "old", timestamp: "2026-01-02T00:00:00.000Z" }] }));
+
+        const pending = messageHandlers.messageUpdateHandler({ message: { id: "switch-pending", channel_id: "100", content: "edited" } } as any);
+        await tick();
+        settings.store.logEdits = false;
+        release(undefined);
+        await pending;
+
+        expect(order).toEqual([]);
+    });
+
+    it("keeps text edits and current attachments without adding removed attachment history", async () => {
+        const { order } = trackWrites();
+        const oldAttachment = { id: "removed", filename: "removed.png" };
+        const currentAttachment = { id: "current", filename: "current.png" };
+        const previous = makeMessage("switch-attachments", { attachments: [oldAttachment], content: "old" });
+        cacheSentMessages.set("100,switch-attachments", previous);
+        settings.store.logDeletedAttachments = false;
+
+        await messageHandlers.messageUpdateHandler({ message: {
+            id: previous.id, channel_id: "100", content: "edited", attachments: [currentAttachment], edited_timestamp: "2026-01-02T00:00:00.000Z"
+        } } as any);
+
+        expect(order).toHaveLength(1);
+        expect(order[0].message.attachments).toEqual([currentAttachment]);
+        expect(order[0].message.editHistory).toEqual([{ content: "old", timestamp: "2026-01-02T00:00:00.000Z" }]);
+        expect(previous.attachments).toEqual([oldAttachment]);
+    });
+
+    it("does not create an attachment-only edit record when attachment history is disabled", async () => {
+        const { order } = trackWrites();
+        cacheSentMessages.set("100,switch-only-attachment", makeMessage("switch-only-attachment", { attachments: [{ id: "removed" }] }));
+        settings.store.logDeletedAttachments = false;
+
+        await messageHandlers.messageUpdateHandler({ message: { id: "switch-only-attachment", channel_id: "100", attachments: [] } } as any);
+
+        expect(order).toEqual([]);
+        expect(cacheSentMessages.get("100,switch-only-attachment")?.attachments).toEqual([]);
+        await messageHandlers.messageDeleteHandler({ channelId: "100", id: "switch-only-attachment" } as any);
+        expect(order[0].message.attachments).toEqual([]);
+    });
+
+    it("keeps a whole deleted message's attachment snapshot when edit attachment history is disabled", async () => {
+        const { order } = trackWrites();
+        const message = makeMessage("switch-snapshot", { attachments: [{ id: "attachment" }] });
+        cacheSentMessages.set("100,switch-snapshot", message);
+        settings.store.logDeletedAttachments = false;
+
+        await messageHandlers.messageDeleteHandler({ channelId: "100", id: message.id } as any);
+
+        expect(order).toHaveLength(1);
+        expect(order[0].message.attachments).toEqual([{ id: "attachment" }]);
+    });
 });
 
 describe("messageUpdateHandler ordering", () => {

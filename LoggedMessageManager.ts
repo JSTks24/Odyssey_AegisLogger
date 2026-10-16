@@ -101,12 +101,14 @@ export const finalizeMessageWrite = async (messageId: string) => {
 };
 
 export const writeMessageRecord = async (message: LoggedMessage | LoggedMessageJSON, status: DBMessageStatus): Promise<boolean> => {
+    if (!loggingScope.records(status === DBMessageStatus.EDITED)) return false;
     const finalMessage = cleanupMessage(message);
 
     if (!loggingScope.allowsMessage(finalMessage)) return false;
     if (status !== DBMessageStatus.GHOST_PINGED && contentExcluded(finalMessage.content, finalMessage.guildId, finalMessage.channel_id, finalMessage.author?.id)) return false;
 
     const existing = await idb.getMessageIDB(finalMessage.id);
+    if (!loggingScope.records(status === DBMessageStatus.EDITED)) return false;
     if (!loggingScope.allowsMessage(finalMessage)) return false;
     const merged = mergeEventIntoRecord(existing, finalMessage, status);
 
@@ -121,6 +123,7 @@ export const writeMessageRecord = async (message: LoggedMessage | LoggedMessageJ
 };
 
 export const addMessage = async (message: LoggedMessage | LoggedMessageJSON, status: DBMessageStatus) => {
+    if (!loggingScope.records(status === DBMessageStatus.EDITED)) return;
     const finalMessage = cleanupMessage(message);
 
     if (!loggingScope.allowsMessage(finalMessage)) return;

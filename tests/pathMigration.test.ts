@@ -1,3 +1,9 @@
+/*
+ * Vencord, a Discord client mod
+ * Copyright (c) 2026 JST
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
+
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { join, win32 } from 'node:path'
 
@@ -34,6 +40,7 @@ describe('host development configuration', () => {
         const document = JSON.parse(readFileSync(join(source, 'tsconfig.host.json'), 'utf8'))
         expect(document.extends).toBe('./tsconfig.json')
         expect(document.compilerOptions.paths['@main/*']).toEqual(['../Vencord 宿主/src/main/*'])
+        expect(document.compilerOptions.paths['@plugins/*']).toEqual(['../Vencord 宿主/src/plugins/*'])
         expect(document.compilerOptions.types).toEqual(['node', 'react', 'vite/client'])
         expect(readFileSync(join(source, 'tsconfig.json'), 'utf8')).toBe(original)
         expect(hostConfig.prepareHost(host, { repoRoot: source })).toMatchObject({ ok: true, changed: false })

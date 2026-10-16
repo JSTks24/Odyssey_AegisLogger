@@ -1,3 +1,9 @@
+/*
+ * Vencord, a Discord client mod
+ * Copyright (c) 2026 JST
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
+
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, resolve } from "node:path";
@@ -8,7 +14,7 @@ const workspace = resolve(project, "../..");
 const fixture = resolve(process.argv[2] ?? resolve(workspace, "Store/filter-fix-20261016/browser-final/index.html"));
 const output = resolve(process.argv[3] ?? resolve(workspace, "Store/filter-blue-20261016/browser"));
 const capturePath = resolve(workspace, "Store/filter-colors-20261016/current-colors.json");
-const require = createRequire(resolve(project, "../Ilias_ArgusSentinel/package.json"));
+const require = createRequire(resolve(project, "package.json"));
 const { chromium } = require("playwright");
 const browserPath = process.env.CHROME_PATH ?? resolve(process.env.ProgramFiles ?? "C:/Program Files", "Google/Chrome/Application/chrome.exe");
 const captured = JSON.parse(readFileSync(capturePath, "utf8"));

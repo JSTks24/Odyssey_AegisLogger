@@ -10,9 +10,10 @@ import "./styles.css";
 
 import { plugins } from "@api/PluginManager";
 import ErrorBoundary from "@components/ErrorBoundary";
+import MessageLogger from "@plugins/messageLogger";
 import { Logger } from "@utils/Logger";
 import definePlugin from "@utils/types";
-import { MessageStore, React } from "@webpack/common";
+import { Alerts, MessageStore, React } from "@webpack/common";
 
 import { OpenLogsButton } from "./components/LogsButton";
 import logsModal from "./components/LogsModal";
@@ -21,13 +22,13 @@ import * as LoggedMessageManager from "./LoggedMessageManager";
 import messageHandlers from "./messageHandlers";
 import { settings } from "./settings";
 import { LoadMessagePayload, LoggedMessageJSON } from "./types";
-import { getNative, mapTimestamp, reAddDeletedMessages } from "./utils";
+import { getNative, mapTimestamp, reAddDeletedMessages, shouldIgnoreMessage } from "./utils";
 import chatBridge from "./utils/chatBridge";
 import { removeContextMenuBindings, setupContextMenuPatches } from "./utils/contextMenu";
 import { removedAttachmentLabelCss, t } from "./utils/i18n";
-import { applyLegacyPluginSettings } from "./utils/legacySettings";
 import loggingScope from "./utils/loggingScope";
 import messageLoggerScope from "./utils/messageLoggerScope";
+import messageLoggerSettings from "./utils/messageLoggerSettings";
 import { doesMatch } from "./utils/parseQuery";
 import pluginRuntime from "./utils/pluginRuntime";
 import * as imageUtils from "./utils/saveImage";
@@ -211,32 +212,37 @@ export default definePlugin({
     },
 
     getDeleted(m1, m2) {
-        if (!loggingScope.allowsMessage(m2, m1)) return false;
+        if (!loggingScope.records()) return false;
+        if (shouldIgnoreMessage(m2, m1)) return false;
         const deleted = m2?.deleted;
         if (deleted == null && m1?.deleted != null) return m1.deleted;
         return deleted;
     },
 
     getEdited(m1, m2) {
-        if (!loggingScope.allowsMessage(m2, m1)) return [];
-        const editHistory = m2?.editHistory;
-        if (editHistory == null && m1?.editHistory != null && m1.editHistory.length > 0)
-            return m1.editHistory.map(mapTimestamp);
+        if (!loggingScope.records(true)) return [];
+        if (shouldIgnoreMessage(m2, m1, true)) return [];
+        const editHistory = m2?.editHistory ?? m1?.editHistory?.map(mapTimestamp);
+        if (settings.store.logDeletedAttachments === false && Array.isArray(editHistory))
+            return editHistory.map(edit => ({ content: edit.content, timestamp: edit.timestamp }));
         return editHistory;
     },
 
     flux: {
-        "MESSAGE_DELETE": messageHandlers.messageDeleteHandler as any,
-        "MESSAGE_DELETE_BULK": messageHandlers.messageDeleteBulkHandler,
-        "MESSAGE_UPDATE": messageHandlers.messageUpdateHandler,
-        "MESSAGE_CREATE": messageHandlers.messageCreateHandler
+        "MESSAGE_DELETE": payload => pluginRuntime.isRunning() ? messageHandlers.messageDeleteHandler(payload as any) : undefined,
+        "MESSAGE_DELETE_BULK": payload => pluginRuntime.isRunning() ? messageHandlers.messageDeleteBulkHandler(payload) : undefined,
+        "MESSAGE_UPDATE": payload => pluginRuntime.isRunning() ? messageHandlers.messageUpdateHandler(payload) : undefined,
+        "MESSAGE_CREATE": payload => pluginRuntime.isRunning() ? messageHandlers.messageCreateHandler(payload) : undefined
     },
 
     async start() {
+        if (!messageLoggerSettings.ready()) {
+            Alerts.show({ title: "AegisLogger", body: t("settings.messageLoggerAdapterFailed") });
+            return;
+        }
+        messageLoggerSettings.prepare();
         pluginRuntime.start();
         messageLoggerScope.start(plugins.MessageLogger as any);
-
-        applyLegacyPluginSettings();
 
         applyRemovedLabelStyle();
 
@@ -273,3 +279,5 @@ export default definePlugin({
         imageUtils.clearAttachmentBlobCache();
     }
 });
+
+messageLoggerSettings.install(MessageLogger as any);

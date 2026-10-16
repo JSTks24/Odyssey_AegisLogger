@@ -1,3 +1,9 @@
+/*
+ * Vencord, a Discord client mod
+ * Copyright (c) 2026 JST
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ */
+
 import { existsSync, readFileSync, realpathSync, writeFileSync } from 'node:fs'
 import { isAbsolute, join, relative, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -8,6 +14,7 @@ const PATH_TARGETS = {
     '@api/*': 'src/api/*',
     '@components/*': 'src/components/*',
     '@main/*': 'src/main/*',
+    '@plugins/*': 'src/plugins/*',
     '@shared/*': 'src/shared/*',
     '@utils/*': 'src/utils/*',
     '@webpack': 'src/webpack/webpack',

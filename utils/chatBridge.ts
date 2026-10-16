@@ -8,7 +8,8 @@ import { MessageStore, UserStore } from "@webpack/common";
 
 import { logger, settings } from "..";
 import idb, { type DBMessageRecord, DBMessageStatus } from "../db";
-import { FetchMessagesResponse } from "../types";
+import { FetchMessagesResponse, LoggedMessageJSON } from "../types";
+import { shouldIgnoreMessage } from ".";
 import chatAttachments from "./chatAttachments";
 import { cleanupUserObject } from "./cleanUp";
 import loggingScope from "./loggingScope";
@@ -23,6 +24,21 @@ const chatAttachmentHolders = chatAttachments.createChatAttachmentHolders();
 let originalGetMessage: typeof MessageStore.getMessage | null = null;
 let unsubscribeChanges: (() => void) | null = null;
 let leaseSweep: MutationObserver | null = null;
+
+function projectMessage(message: LoggedMessageJSON): LoggedMessageJSON {
+    const logAttachments = settings.store.logDeletedAttachments !== false;
+
+    return {
+        ...message,
+        author: Object.assign(Object.create(Object.getPrototypeOf(message.author)), message.author),
+        mentions: [...(message.mentions ?? [])],
+        attachments: message.attachments?.filter(attachment => message.deleted || logAttachments || !attachment.deleted).map(attachment => ({ ...attachment })),
+        editHistory: loggingScope.records(true) ? message.editHistory?.map(edit => {
+            const { attachments, ...textEdit } = edit;
+            return logAttachments ? { ...textEdit, attachments: attachments?.map(attachment => ({ ...attachment })) } : textEdit;
+        }) : []
+    };
+}
 
 function adoptChatRecords(scope: leaseScope, records: DBMessageRecord[]) {
     chatMessages.setLimit(settings.store.cacheLimit);
@@ -112,7 +128,7 @@ async function processMessageFetch(response: FetchMessagesResponse) {
                 stale.push(record.message_id);
                 continue;
             }
-            if (!loggingScope.allowsMessage(record.message, fallback)) {
+            if (shouldIgnoreMessage(record.message, fallback, record.status === DBMessageStatus.EDITED)) {
                 stale.push(record.message_id);
                 chatMessages.invalidate([record.message_id]);
                 idb.cachedMessages.delete(record.message_id);
@@ -120,7 +136,7 @@ async function processMessageFetch(response: FetchMessagesResponse) {
             }
             usable.push({
                 ...record,
-                message: { ...record.message, guildId: loggingScope.guildId(loggingScope.context(record.message, fallback)) }
+                message: projectMessage({ ...record.message, guildId: loggingScope.guildId(loggingScope.context(record.message, fallback)) })
             });
         }
 
@@ -144,7 +160,7 @@ async function processMessageFetch(response: FetchMessagesResponse) {
             if (record.message.editHistory && record.message.editHistory.length > 0) {
                 recivedMessage.editHistory = record.message.editHistory;
 
-                if (record.message.attachments?.length) {
+                if (settings.store.logDeletedAttachments !== false && record.message.attachments?.length) {
                     recivedMessage.attachments = record.message.attachments;
                 }
             }
@@ -187,17 +203,18 @@ function start() {
     MessageStore.getMessage = (channelId: string, messageId: string) => {
         const latestMessage = originalGetMessage!(channelId, messageId);
         const cached = chatMessages.get(messageId)?.message ?? idb.cachedMessages.get(messageId);
-        if (!cached || !loggingScope.allowsMessage(cached, latestMessage))
+        if (!cached || shouldIgnoreMessage(cached, latestMessage, !cached.deleted))
             return latestMessage;
 
         if (cached.deleted)
-            return messageJsonToMessageClass({ message: cached });
+            return messageJsonToMessageClass({ message: projectMessage(cached) });
 
         return messageJsonToMessageClass({
-            message: {
+            message: projectMessage({
                 ...cached,
                 ...(latestMessage ?? {}),
-            }
+                timestamp: cached.timestamp,
+            })
         });
     };
 

@@ -6,7 +6,7 @@
 
 import { MessageStore } from "@webpack/common";
 
-import loggingScope from "./loggingScope";
+import { shouldIgnoreMessage } from ".";
 
 interface messageLoggerTarget {
     shouldIgnore(message: any, isEdit?: boolean): boolean;
@@ -36,12 +36,10 @@ function start(target: messageLoggerTarget | null | undefined) {
 
     const next: scopeBinding = { target, original: target.shouldIgnore, guarded: target.shouldIgnore, active: true };
     next.guarded = function(message: any, isEdit?: boolean) {
-        if (next.active) {
-            const channelId = message?.channel_id ?? message?.channelId;
-            const cached = channelId && message?.id ? MessageStore.getMessage(channelId, message.id) : undefined;
-            if (!loggingScope.allowsMessage(message, cached)) return true;
-        }
-        return next.original.call(this, message, isEdit);
+        if (!next.active) return next.original.call(this, message, isEdit);
+        const channelId = message?.channel_id ?? message?.channelId;
+        const cached = channelId && message?.id ? MessageStore.getMessage(channelId, message.id) : undefined;
+        return shouldIgnoreMessage(message, cached, isEdit);
     };
     target.shouldIgnore = next.guarded;
     binding = next;

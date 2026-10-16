@@ -16,7 +16,6 @@
  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
 */
 
-import { Settings } from "@api/Settings";
 import { findStoreLazy } from "@webpack";
 import { ChannelStore, SelectedChannelStore, UserStore } from "@webpack/common";
 
@@ -26,7 +25,7 @@ import { DISCORD_EPOCH } from "./constants";
 import { messageMatchesRules,parseExclusionRules } from "./exclusionRules";
 import loggingScope from "./loggingScope";
 import { memoize } from "./memoize";
-import { findLastIndex, getGuildIdByChannel } from "./misc";
+import { findLastIndex, getGuildIdByChannel, hasPingged, isGhostPinged } from "./misc";
 
 export * from "./cleanUp";
 export * from "./constants";
@@ -109,8 +108,7 @@ export function shouldIgnore({ channelId, authorId, guildId, flags, bot, ghostPi
     if (!ghostPinged && contentExcluded(content, guildId, channelId, authorId))
         return true;
 
-    const myId = UserStore.getCurrentUser().id;
-    const { ignoreUsers, ignoreChannels, ignoreGuilds } = Settings.plugins.MessageLogger;
+    const myId = UserStore.getCurrentUser()?.id;
     const { ignoreSelf } = settings.store;
 
     if (ignoreSelf && authorId === myId)
@@ -120,6 +118,7 @@ export function shouldIgnore({ channelId, authorId, guildId, flags, bot, ghostPi
 
     const shouldLogCurrentChannel = settings.store.alwaysLogCurrentChannel && SelectedChannelStore.getChannelId() === channelId;
 
+    const parentId = channelId ? ChannelStore.getChannel(channelId)?.parent_id : undefined;
     const ids = [authorId, channelId, guildId];
 
     const whitelistedIds = getIdList("whitelistedIds");
@@ -128,16 +127,11 @@ export function shouldIgnore({ channelId, authorId, guildId, flags, bot, ghostPi
     const isAuthorWhitelisted = whitelistedIds.includes(authorId!);
     const isChannelWhitelisted = whitelistedIds.includes(channelId!);
 
-    const blacklistedIds = [
-        ...getIdList("blacklistedIds"),
-        ...(ignoreUsers ?? []).split(","),
-        ...(ignoreChannels ?? []).split(","),
-        ...(ignoreGuilds ?? []).split(",")
-    ];
+    const blacklistedIds = getIdList("blacklistedIds");
 
     const isBlacklisted = blacklistedIds.some(e => ids.includes(e));
-    const isAuthorBlacklisted = blacklistedIds.includes(authorId);
-    const isChannelBlacklisted = blacklistedIds.includes(channelId);
+    const isAuthorBlacklisted = authorId != null && blacklistedIds.includes(authorId);
+    const isChannelBlacklisted = blacklistedIds.includes(channelId!) || parentId != null && blacklistedIds.includes(parentId);
 
 
     const shouldIgnoreMutedGuilds = settings.store.ignoreMutedGuilds;
@@ -163,6 +157,19 @@ export function shouldIgnore({ channelId, authorId, guildId, flags, bot, ghostPi
     if (channelId != null && shouldIgnoreMutedChannels && UserGuildSettingsStore.isChannelMuted(guildId, channelId)) return true;
 
     return false;
+}
+
+export function shouldIgnoreMessage(message: any, fallback?: any, isEdit = false): boolean {
+    if (!loggingScope.records(isEdit)) return true;
+    const context = loggingScope.context(message, fallback);
+    const fullMessage = { ...fallback, ...message };
+    return shouldIgnore({
+        ...context,
+        guildId: loggingScope.guildId(context),
+        flags: message?.flags ?? fallback?.flags,
+        content: message?.content ?? fallback?.content,
+        ghostPinged: !!isGhostPinged(fullMessage) || !isEdit && !!hasPingged(fullMessage)
+    });
 }
 
 export type ListType = "blacklistedIds" | "whitelistedIds";

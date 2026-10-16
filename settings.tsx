@@ -24,6 +24,7 @@ import updaterModal from "./components/UpdaterModal";
 import messageHandlers from "./messageHandlers";
 import { DEFAULT_IMAGE_CACHE_DIR } from "./utils/constants";
 import { t } from "./utils/i18n";
+import messageLoggerSettings from "./utils/messageLoggerSettings";
 import { clearLegacyLogs, countLegacyRemaining, isLegacyDbCleared, legacyDbExists, migrateLegacyImages, migrateLegacyLogs } from "./utils/migration";
 import { exportLogs, importLogs } from "./utils/settingsUtils";
 
@@ -221,6 +222,36 @@ export const settings = definePluginSettings({
         restartNeeded: true,
     },
 
+    deleteStyle: {
+        get displayName() { return t("settings.title.deleteStyle"); },
+        type: OptionType.SELECT,
+        get description() { return t("settings.deleteStyle"); },
+        get options() {
+            return [
+                { label: t("settings.deleteStyle.text"), value: "text", default: true },
+                { label: t("settings.deleteStyle.overlay"), value: "overlay" }
+            ];
+        },
+        onChange() {
+            messageLoggerSettings.refreshStyle();
+        }
+    },
+
+    collapseDeleted: {
+        get displayName() { return t("settings.title.collapseDeleted"); },
+        type: OptionType.BOOLEAN,
+        get description() { return t("settings.collapseDeleted"); },
+        default: false,
+        restartNeeded: true,
+    },
+
+    inlineEdits: {
+        get displayName() { return t("settings.title.inlineEdits"); },
+        type: OptionType.BOOLEAN,
+        get description() { return t("settings.inlineEdits"); },
+        default: true,
+    },
+
     messagesToDisplayAtOnceInLogs: {
         get displayName() { return t("settings.title.messagesToDisplayAtOnceInLogs"); },
         type: OptionType.SELECT,
@@ -249,6 +280,28 @@ export const settings = definePluginSettings({
     sectionCapture: {
         type: OptionType.COMPONENT,
         component: () => <SectionHeader titleKey="settings.group.capture" hintKey="settings.group.captureHint" />
+    },
+
+    logDeletes: {
+        get displayName() { return t("settings.title.logDeletes"); },
+        type: OptionType.BOOLEAN,
+        get description() { return t("settings.logDeletes"); },
+        default: true,
+    },
+
+    logEdits: {
+        get displayName() { return t("settings.title.logEdits"); },
+        type: OptionType.BOOLEAN,
+        get description() { return t("settings.logEdits"); },
+        default: true,
+    },
+
+    logDeletedAttachments: {
+        get displayName() { return t("settings.title.logDeletedAttachments"); },
+        type: OptionType.BOOLEAN,
+        get description() { return t("settings.logDeletedAttachments"); },
+        default: true,
+        restartNeeded: true,
     },
 
     saveImages: {
@@ -488,4 +541,6 @@ export const settings = definePluginSettings({
         get description() { return t("settings.clearLogs"); },
         component: labeled(() => <ClearLogsButton onCleared={() => { }} />)
     },
-});
+}).withPrivateSettings<{
+    messageLoggerSettingsVersion?: number;
+}>();

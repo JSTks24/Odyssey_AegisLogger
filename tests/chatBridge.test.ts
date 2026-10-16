@@ -21,6 +21,14 @@ vi.mock("../index", () => ({
     }
 }));
 
+vi.mock("@api/Settings", () => ({
+    PlainSettings: { plugins: {} },
+    Settings: { plugins: {} },
+    SettingsStore: { markAsChanged: vi.fn() }
+}));
+
+vi.mock("../settings", () => ({ settings: { store: {} } }));
+
 vi.mock("../utils/saveImage/ImageManager", () => ({
     getImage: vi.fn(async () => new Uint8Array([1, 2, 3])),
     downloadAttachment: vi.fn(async () => undefined),
@@ -32,12 +40,13 @@ vi.mock("../utils/misc", async importOriginal => ({
     messageJsonToMessageClass: (log: any) => log.message
 }));
 
-import { ChannelStore, MessageStore, UserStore } from "@webpack/common";
+import { ChannelStore, MessageStore, SelectedChannelStore, UserStore } from "@webpack/common";
 
 import idb, { DBMessageStatus } from "../db";
 import { settings } from "../index";
 import chatBridge from "../utils/chatBridge";
 import messageChanges from "../utils/messageChanges";
+import messageLoggerSettings from "../utils/messageLoggerSettings";
 import pluginRuntime from "../utils/pluginRuntime";
 import {
     acquireAttachmentLease,
@@ -144,9 +153,23 @@ const tick = () => new Promise(resolve => setTimeout(resolve, 0));
 
 beforeEach(async () => {
     settings.store.whitelistedIds = "";
+    settings.store.blacklistedIds = "";
+    settings.store.exclusionRules = "";
+    settings.store.ignoreSelf = false;
     settings.store.ignoreBots = false;
+    settings.store.alwaysLogDirectMessages = false;
+    settings.store.alwaysLogCurrentChannel = false;
+    settings.store.ignoreMutedGuilds = false;
+    settings.store.ignoreMutedCategories = false;
+    settings.store.ignoreMutedChannels = false;
+    settings.store.messageLoggerSettingsVersion = undefined;
+    settings.store.logDeletes = true;
+    settings.store.logEdits = true;
+    settings.store.logDeletedAttachments = true;
     ChannelStore.getChannel = () => null;
     UserStore.getUser = () => null;
+    UserStore.getCurrentUser = () => ({ id: "self" });
+    SelectedChannelStore.getChannelId = () => "100";
     await idb.clearMessagesIDB();
 
     messageChanges.resetForTests();
@@ -688,5 +711,264 @@ describe("ignored bot replay boundaries", () => {
         expect(response.body.extra).toBeUndefined();
         expect(readMessage("984")).toBeNull();
         expect(await idb.getMessageIDB("984")).toBeDefined();
+    });
+});
+
+describe("recording switch replay boundaries", () => {
+    it.each([DBMessageStatus.DELETED, DBMessageStatus.GHOST_PINGED])("preserves %s records while deleted replay is disabled", async status => {
+        const archived = makeMessage("990", { editHistory: [{ content: "old", timestamp: "2026-01-01T00:00:00.000Z" }] });
+        await idb.addMessageIDB(archived, status);
+        settings.store.logDeletes = false;
+        pluginRuntime.start();
+        chatBridge.start();
+
+        const response = makeResponse(["990"]);
+        await chatBridge.processMessageFetch(response);
+
+        expect(response.body.extra).toBeUndefined();
+        expect(response.body[0].editHistory).toBeUndefined();
+        expect(readMessage("990")).toBeNull();
+        expect(chatBridge.stats().messages).toBe(0);
+        expect((await idb.getMessageIDB("990"))?.message).toEqual(archived);
+    });
+
+    it("does not project old edit history through a deleted record when edits are disabled", async () => {
+        const archived = makeMessage("991", {
+            attachments: [makeAttachment("deleted-snapshot")],
+            editHistory: [{ content: "old", timestamp: "2026-01-01T00:00:00.000Z", attachments: [makeAttachment("old-edit")] }]
+        });
+        await idb.addMessageIDB(archived, DBMessageStatus.DELETED);
+        settings.store.logEdits = false;
+        pluginRuntime.start();
+        chatBridge.start();
+
+        const response = makeResponse(["991"]);
+        await chatBridge.processMessageFetch(response);
+
+        expect(response.body.extra).toHaveLength(1);
+        expect(response.body.extra[0].editHistory).toEqual([]);
+        expect(response.body.extra[0].attachments).toHaveLength(1);
+        expect(response.body[0].editHistory).toBeUndefined();
+        expect(readMessage("991").editHistory).toEqual([]);
+        expect((await idb.getMessageIDB("991"))?.message).toEqual(archived);
+    });
+
+    it("blocks archived edits when edits are disabled while leaving live messages intact", async () => {
+        await idb.addMessageIDB(makeMessage("992", { deleted: false, editHistory: [{ content: "old", timestamp: "2026-01-01T00:00:00.000Z" }] }), DBMessageStatus.EDITED);
+        const live = makeMessage("992", { deleted: false, content: "live", editHistory: [] });
+        fallbackGetMessage.mockReturnValue(live);
+        settings.store.logEdits = false;
+        pluginRuntime.start();
+        chatBridge.start();
+
+        const response = makeResponse(["992"]);
+        await chatBridge.processMessageFetch(response);
+
+        expect(response.body.extra).toBeUndefined();
+        expect(response.body[0].editHistory).toBeUndefined();
+        expect(readMessage("992")).toBe(live);
+        expect(await idb.getMessageIDB("992")).toBeDefined();
+    });
+
+    it("strips edit attachment history from chat copies without changing archived data or live attachments", async () => {
+        const current = makeAttachment("current");
+        const removed = { ...makeAttachment("removed"), deleted: true };
+        const archived = makeMessage("993", {
+            deleted: false,
+            attachments: [current, removed],
+            editHistory: [{ content: "old", timestamp: "2026-01-01T00:00:00.000Z", attachments: [removed] }]
+        });
+        await idb.addMessageIDB(archived, DBMessageStatus.EDITED);
+        settings.store.logDeletedAttachments = false;
+        pluginRuntime.start();
+        chatBridge.start();
+
+        const response = makeResponse(["993"]);
+        response.body[0].attachments = [current];
+        await chatBridge.processMessageFetch(response);
+
+        expect(response.body[0].editHistory).toEqual([{ content: "old", timestamp: "2026-01-01T00:00:00.000Z" }]);
+        expect(response.body[0].attachments).toEqual([current]);
+        expect(readMessage("993").attachments).toHaveLength(1);
+        expect(readMessage("993").attachments[0].id).toBe("current");
+        expect(readMessage("993").editHistory[0].attachments).toBeUndefined();
+        expect((await idb.getMessageIDB("993"))?.message).toEqual(archived);
+    });
+
+    it("rechecks recording switches for an adopted cache record", async () => {
+        await idb.addMessageIDB(makeMessage("994", { editHistory: [{ content: "old", timestamp: "2026-01-01T00:00:00.000Z" }] }), DBMessageStatus.DELETED);
+        pluginRuntime.start();
+        chatBridge.start();
+        await chatBridge.processMessageFetch(makeResponse(["994"]));
+
+        settings.store.logEdits = false;
+        expect(readMessage("994").editHistory).toEqual([]);
+        settings.store.logDeletes = false;
+        expect(readMessage("994")).toBeNull();
+        expect(await idb.getMessageIDB("994")).toBeDefined();
+    });
+
+    it("rechecks deletion settings when a pending replay settles", async () => {
+        await idb.addMessageIDB(makeMessage("995", { attachments: [makeAttachment("pending")] }), DBMessageStatus.DELETED);
+        pluginRuntime.start();
+        chatBridge.start();
+        const read = pauseChatRead();
+        const response = makeResponse(["995"]);
+        const pending = chatBridge.processMessageFetch(response);
+
+        settings.store.logDeletes = false;
+        read.release();
+        await pending;
+        read.restore();
+
+        expect(response.body.extra).toBeUndefined();
+        expect(chatBridge.stats()).toEqual({ messages: 0, holders: 0 });
+        expect(await idb.getMessageIDB("995")).toBeDefined();
+    });
+});
+
+describe("shared historical replay filters", () => {
+    it("preserves native author methods and the archived JSON timestamp without sharing author mutations", async () => {
+        class NativeAuthor {
+            id = "u1";
+            username = "native";
+
+            getAvatarURL() {
+                return `avatar:${this.id}`;
+            }
+        }
+
+        const archived = makeMessage("1003", {
+            deleted: false,
+            author: { id: "u1", username: "archived" },
+            editHistory: [{ content: "old", timestamp: "2026-01-01T00:00:00.000Z" }]
+        });
+        await idb.addMessageIDB(archived, DBMessageStatus.EDITED);
+        const author = new NativeAuthor();
+        fallbackGetMessage.mockReturnValue({ ...archived, author, timestamp: new Date(archived.timestamp) });
+        pluginRuntime.start();
+        chatBridge.start();
+
+        const message = readMessage("1003");
+
+        expect(message.editHistory).toEqual(archived.editHistory);
+        expect(message.timestamp).toBe(archived.timestamp);
+        expect(typeof message.timestamp).toBe("string");
+        expect(message.author).toBeInstanceOf(NativeAuthor);
+        expect(message.author.getAvatarURL()).toBe("avatar:u1");
+        expect(message.author).not.toBe(author);
+        message.author.username = "changed";
+        expect(author.username).toBe("native");
+        expect((await idb.getMessageIDB("1003"))?.message.author.username).toBe("archived");
+    });
+
+    it.each([
+        { key: "ignoreUsers", id: "u1" },
+        { key: "ignoreChannels", id: "100" },
+        { key: "ignoreChannels", id: "category" },
+        { key: "ignoreGuilds", id: "guild" }
+    ])("applies the migrated $key blacklist for $id to archived deletes and edits", async ({ key, id }) => {
+        ChannelStore.getChannel = () => ({ guild_id: "guild", parent_id: "category" });
+        messageLoggerSettings.migrate(settings.store, { [key]: id });
+        const deleted = makeMessage("996");
+        const edited = makeMessage("997", { deleted: false, editHistory: [{ content: "old", timestamp: "2026-01-01T00:00:00.000Z" }] });
+        await idb.addMessageIDB(deleted, DBMessageStatus.DELETED);
+        await idb.addMessageIDB(edited, DBMessageStatus.EDITED);
+        pluginRuntime.start();
+        chatBridge.start();
+
+        expect(readMessage("996")).toBeNull();
+        expect(readMessage("997")).toBeNull();
+        const response = makeResponse(["996", "997"]);
+        await chatBridge.processMessageFetch(response);
+
+        expect(response.body.extra).toBeUndefined();
+        expect(response.body[1].editHistory).toBeUndefined();
+        expect(chatBridge.stats().messages).toBe(0);
+        expect((await idb.getMessageIDB("996"))?.message).toEqual(deleted);
+        expect((await idb.getMessageIDB("997"))?.message).toEqual(edited);
+    });
+
+    it.each([DBMessageStatus.DELETED, DBMessageStatus.EDITED, DBMessageStatus.GHOST_PINGED])("applies ignoreSelf before replay exceptions for %s", async status => {
+        const archived = makeMessage("998", {
+            author: { id: "self" },
+            deleted: status !== DBMessageStatus.EDITED,
+            mentions: ["self"],
+            editHistory: [{ content: "old", timestamp: "2026-01-01T00:00:00.000Z" }]
+        });
+        await idb.addMessageIDB(archived, status);
+        settings.store.ignoreSelf = true;
+        settings.store.whitelistedIds = "self";
+        settings.store.alwaysLogCurrentChannel = true;
+        settings.store.alwaysLogDirectMessages = true;
+        ChannelStore.getChannel = () => ({ type: 1, isDM: () => true });
+        pluginRuntime.start();
+        chatBridge.start();
+
+        const response = makeResponse(["998"]);
+        await chatBridge.processMessageFetch(response);
+
+        expect(response.body.extra).toBeUndefined();
+        expect(response.body[0].editHistory).toBeUndefined();
+        expect(readMessage("998")).toBeNull();
+        expect((await idb.getMessageIDB("998"))?.message).toEqual(archived);
+    });
+
+    it.each([DBMessageStatus.DELETED, DBMessageStatus.EDITED])("applies current content exclusions to archived %s", async status => {
+        const archived = makeMessage("999", { deleted: status === DBMessageStatus.DELETED, content: "excluded text", editHistory: [{ content: "old", timestamp: "2026-01-01T00:00:00.000Z" }] });
+        await idb.addMessageIDB(archived, status);
+        settings.store.exclusionRules = "excluded";
+        pluginRuntime.start();
+        chatBridge.start();
+
+        expect(readMessage("999")).toBeNull();
+        const response = makeResponse(["999"]);
+        await chatBridge.processMessageFetch(response);
+
+        expect(response.body.extra).toBeUndefined();
+        expect(response.body[0].editHistory).toBeUndefined();
+        expect((await idb.getMessageIDB("999"))?.message).toEqual(archived);
+    });
+
+    it("keeps ghost ping exceptions ahead of migrated blacklists and content exclusions", async () => {
+        const archived = makeMessage("1000", { mentions: ["self"], content: "excluded text" });
+        await idb.addMessageIDB(archived, DBMessageStatus.GHOST_PINGED);
+        messageLoggerSettings.migrate(settings.store, { ignoreUsers: "u1", ignoreChannels: "100" });
+        settings.store.exclusionRules = "excluded";
+        pluginRuntime.start();
+        chatBridge.start();
+
+        const response = makeResponse(["1000"]);
+        await chatBridge.processMessageFetch(response);
+
+        expect(response.body.extra).toHaveLength(1);
+        expect(readMessage("1000")?.content).toBe("excluded text");
+    });
+
+    it("keeps user whitelist precedence over a migrated category blacklist", async () => {
+        const archived = makeMessage("1001");
+        await idb.addMessageIDB(archived, DBMessageStatus.DELETED);
+        messageLoggerSettings.migrate(settings.store, { ignoreChannels: "category" });
+        settings.store.whitelistedIds = "u1";
+        ChannelStore.getChannel = () => ({ guild_id: "guild", parent_id: "category" });
+        pluginRuntime.start();
+        chatBridge.start();
+
+        const response = makeResponse(["1001"]);
+        await chatBridge.processMessageFetch(response);
+
+        expect(response.body.extra).toHaveLength(1);
+        expect(readMessage("1001")?.content).toBe(archived.content);
+    });
+
+    it("rechecks current filters for an already adopted cache record", async () => {
+        await idb.addMessageIDB(makeMessage("1002"), DBMessageStatus.DELETED);
+        pluginRuntime.start();
+        chatBridge.start();
+        await chatBridge.processMessageFetch(makeResponse(["1002"]));
+        settings.store.blacklistedIds = "u1";
+
+        expect(readMessage("1002")).toBeNull();
+        expect(await idb.getMessageIDB("1002")).toBeDefined();
     });
 });

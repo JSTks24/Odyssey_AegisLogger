@@ -214,9 +214,21 @@ describe("shouldIgnore", () => {
         expect(shouldIgnore({ channelId: "c1", authorId: "a1", content: "hello" })).toBe(false);
     });
 
-    it("honors the built-in MessageLogger ignoreUsers list as a merged blacklist", () => {
+    it("does not keep reading the built-in MessageLogger blacklist after migration", () => {
         Settings.plugins.MessageLogger.ignoreUsers = "spammer";
+        expect(shouldIgnore({ channelId: "c1", authorId: "spammer" })).toBe(false);
+        settings.store.blacklistedIds = "spammer";
         expect(shouldIgnore({ channelId: "c1", authorId: "spammer" })).toBe(true);
+    });
+
+    it("matches blacklisted parent categories by complete id", () => {
+        settings.store.blacklistedIds = "category-12";
+        ChannelStore.getChannel = () => ({ parent_id: "category-1" });
+        expect(shouldIgnore({ channelId: "c1", authorId: "a1" })).toBe(false);
+        ChannelStore.getChannel = () => ({ parent_id: "category-12" });
+        expect(shouldIgnore({ channelId: "c1", authorId: "a1" })).toBe(true);
+        settings.store.whitelistedIds = "a1";
+        expect(shouldIgnore({ channelId: "c1", authorId: "a1" })).toBe(false);
     });
 
     it("always keeps direct messages when alwaysLogDirectMessages is on", () => {

@@ -43,12 +43,12 @@ export function mapLegacyPluginSettings(legacy: Record<string, unknown>): Record
     return mapped;
 }
 
-export function applyLegacyPluginSettings(): boolean {
+export function applyLegacyPluginSettings(store: Record<string, unknown> = settings.store): boolean {
     const legacy = (Settings.plugins as Record<string, Record<string, unknown> | undefined>)[LEGACY_PLUGIN_NAME];
     if (!legacy) return false;
 
     for (const [key, value] of Object.entries(mapLegacyPluginSettings(legacy)))
-        (settings.store as Record<string, unknown>)[key] = value;
+        store[key] = value;
 
     delete (Settings.plugins as Record<string, unknown>)[LEGACY_PLUGIN_NAME];
     return true;

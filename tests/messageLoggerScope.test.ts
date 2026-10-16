@@ -7,7 +7,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../index", () => ({ settings: { store: {} } }));
-vi.mock("@webpack", () => ({ findLazy: () => undefined, findByCodeLazy: () => () => undefined }));
+vi.mock("@webpack", () => ({
+    findLazy: () => undefined,
+    findByCodeLazy: () => () => undefined,
+    findStoreLazy: () => ({ isMuted: () => false, isCategoryMuted: () => false, isChannelMuted: () => false })
+}));
 vi.mock("../db", () => ({ DBMessageStatus: { DELETED: "DELETED", EDITED: "EDITED", GHOST_PINGED: "GHOST_PINGED" } }));
 
 import { ChannelStore, MessageStore, UserStore } from "@webpack/common";
@@ -19,9 +23,17 @@ beforeEach(() => {
     messageLoggerScope.stop();
     settings.store.whitelistedIds = "allowed-one,allowed-two";
     settings.store.ignoreBots = false;
+    settings.store.ignoreSelf = false;
+    settings.store.blacklistedIds = "";
+    settings.store.exclusionRules = "";
+    settings.store.alwaysLogDirectMessages = false;
+    settings.store.alwaysLogCurrentChannel = false;
+    settings.store.logDeletes = true;
+    settings.store.logEdits = true;
     ChannelStore.getChannel = () => null;
     MessageStore.getMessage = () => null;
     UserStore.getUser = () => null;
+    UserStore.getCurrentUser = () => ({ id: "self" });
 });
 
 afterEach(() => messageLoggerScope.stop());
@@ -29,10 +41,10 @@ afterEach(() => messageLoggerScope.stop());
 describe("native MessageLogger scope integration", () => {
     it.each([
         [false, false, false],
-        [false, true, true],
+        [false, true, false],
         [true, false, true],
         [true, true, true]
-    ])("combines independent bot settings with local=%s and native=%s", (localIgnore, nativeIgnore, expected) => {
+    ])("uses only local bot settings with local=%s and native=%s", (localIgnore, nativeIgnore, expected) => {
         settings.store.ignoreBots = localIgnore;
         settings.store.whitelistedIds = "bot";
         const original = vi.fn((message: any, _isEdit?: boolean) => nativeIgnore && message.author?.bot === true);
@@ -41,7 +53,7 @@ describe("native MessageLogger scope integration", () => {
         const message = { id: "1", channel_id: "current", author: { id: "bot", bot: true } };
         expect(target.shouldIgnore(message, false)).toBe(expected);
         expect(target.shouldIgnore(message, true)).toBe(expected);
-        expect(original).toHaveBeenCalledTimes(localIgnore ? 0 : 2);
+        expect(original).not.toHaveBeenCalled();
     });
 
     it("blocks partial bot updates from the same native message before attachment and edit side effects", () => {
@@ -80,7 +92,7 @@ describe("native MessageLogger scope integration", () => {
         expect(original).not.toHaveBeenCalled();
     });
 
-    it("lets native edit, attachment and delete guards retain allowed messages", () => {
+    it("uses local filtering even when the native filter disagrees", () => {
         const original = vi.fn(function(this: any, _message: any, _isEdit?: boolean) { return this.blocked; });
         const target = { blocked: false, shouldIgnore: original };
         messageLoggerScope.start(target);
@@ -88,8 +100,8 @@ describe("native MessageLogger scope integration", () => {
         expect(target.shouldIgnore(item, true)).toBe(false);
         expect(target.shouldIgnore(item, false)).toBe(false);
         target.blocked = true;
-        expect(target.shouldIgnore(item, true)).toBe(true);
-        expect(original.mock.calls).toHaveLength(3);
+        expect(target.shouldIgnore(item, true)).toBe(false);
+        expect(original).not.toHaveBeenCalled();
     });
 
     it("recovers native partial update context from the same message cache", () => {
@@ -101,7 +113,7 @@ describe("native MessageLogger scope integration", () => {
         messageLoggerScope.start(target);
         expect(target.shouldIgnore({ id: "1", channel_id: "current" }, true)).toBe(false);
         expect(target.shouldIgnore({ id: "2", channel_id: "current" }, true)).toBe(true);
-        expect(original).toHaveBeenCalledTimes(1);
+        expect(original).not.toHaveBeenCalled();
     });
 
     it("keeps known DMs and the empty whitelist behavior", () => {
@@ -113,6 +125,34 @@ describe("native MessageLogger scope integration", () => {
         settings.store.whitelistedIds = "";
         ChannelStore.getChannel = () => null;
         expect(target.shouldIgnore({ id: "2", channel_id: "unknown" })).toBe(false);
+    });
+
+    it.each([false, true])("checks the record switch before whitelist and ghost ping exceptions with edit=%s", isEdit => {
+        settings.store[isEdit ? "logEdits" : "logDeletes"] = false;
+        settings.store.whitelistedIds = "self";
+        const original = vi.fn(() => false);
+        const target = { shouldIgnore: original };
+        messageLoggerScope.start(target);
+        expect(target.shouldIgnore({ id: "1", channel_id: "current", author: { id: "self" }, ghostPinged: true }, isEdit)).toBe(true);
+        expect(original).not.toHaveBeenCalled();
+    });
+
+    it("uses the same local blacklist for native edits and deletes", () => {
+        settings.store.whitelistedIds = "";
+        settings.store.blacklistedIds = "blocked";
+        const target = { shouldIgnore: vi.fn(() => false) };
+        messageLoggerScope.start(target);
+        const message = { id: "1", channel_id: "current", author: { id: "blocked" } };
+        expect(target.shouldIgnore(message, false)).toBe(true);
+        expect(target.shouldIgnore(message, true)).toBe(true);
+    });
+
+    it("keeps synchronous native filtering usable during account transitions", () => {
+        settings.store.whitelistedIds = "";
+        UserStore.getCurrentUser = () => null;
+        const target = { shouldIgnore: vi.fn(() => false) };
+        messageLoggerScope.start(target);
+        expect(target.shouldIgnore({ id: "1", channel_id: "current", mentions: ["other"] }, false)).toBe(false);
     });
 
     it("starts and stops idempotently and restores the exact original function", () => {

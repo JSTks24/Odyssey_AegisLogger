@@ -7,9 +7,10 @@
 import { findByPropsLazy } from "@webpack";
 import { FluxDispatcher } from "@webpack/common";
 
+import { settings } from ".";
 import idb, { DBMessageStatus } from "./db";
 import { addMessage, enqueueMessageTask, finalizeMessageWrite, writeMessageRecord } from "./LoggedMessageManager";
-import { LoggedMessage, LoggedMessageJSON, MessageCreatePayload, MessageDeleteBulkPayload, MessageDeletePayload, MessageUpdatePayload } from "./types";
+import { LoggedAttachment, LoggedEdit, LoggedMessage, LoggedMessageJSON, MessageCreatePayload, MessageDeleteBulkPayload, MessageDeletePayload, MessageUpdatePayload } from "./types";
 import { cleanUpCachedMessage, contentExcluded, hasPingged, isGhostPinged, shouldIgnore } from "./utils";
 import { mergeRemovedAttachments } from "./utils/attachmentDiff";
 import { LimitedMap } from "./utils/LimitedMap";
@@ -33,7 +34,7 @@ export function setGetMessage(getMessage: typeof oldGetMessage) {
 const handledMessageIds = new Set<string>();
 
 export async function messageDeleteHandler(payload: MessageDeletePayload) {
-    if (payload.mlDeleted) return;
+    if (payload.mlDeleted || !loggingScope.records()) return;
 
     if (handledMessageIds.has(payload.id)) {
         return;
@@ -92,12 +93,36 @@ export async function messageDeleteBulkHandler({ channelId, guildId, ids }: Mess
     }
 }
 
+function refreshCachedMessage(payload: MessageUpdatePayload) {
+    const { channel_id, id } = payload.message;
+    const cachedMessage = cacheSentMessages.get(`${channel_id},${id}`);
+    if (cachedMessage == null || !loggingScope.allowsMessage(payload.message, cachedMessage)) return;
+
+    cacheSentMessages.set(`${channel_id},${id}`, cleanUpCachedMessage({
+        ...cachedMessage,
+        ...payload.message,
+        editHistory: cachedMessage.editHistory
+    }));
+}
+
 export async function messageUpdateHandler(payload: MessageUpdatePayload) {
+    if (!loggingScope.records(true)) return refreshCachedMessage(payload);
+
     const { channel_id, id } = payload.message;
 
     const wrote = await enqueueMessageTask(id, async () => {
-        const cachedMessage = cacheSentMessages.get(`${channel_id},${id}`);
+        if (!loggingScope.records(true)) {
+            refreshCachedMessage(payload);
+            return false;
+        }
+
+        let cachedMessage = cacheSentMessages.get(`${channel_id},${id}`);
         const previousRecord = await idb.getMessageIDB(id);
+        if (!loggingScope.records(true)) {
+            refreshCachedMessage(payload);
+            return false;
+        }
+
         const previous = previousRecord?.message ?? cachedMessage ?? null;
 
         let message = oldGetMessage?.(channel_id, id) as LoggedMessage | LoggedMessageJSON | null;
@@ -129,6 +154,11 @@ export async function messageUpdateHandler(payload: MessageUpdatePayload) {
             return false;
         }
 
+        if (settings.store.logDeletedAttachments === false && cachedMessage != null && payload.message.attachments != null) {
+            cachedMessage = { ...cachedMessage, attachments: payload.message.attachments.filter((attachment: LoggedAttachment) => !attachment.deleted).map(attachment => ({ ...attachment })) };
+            cacheSentMessages.set(`${channel_id},${id}`, cachedMessage);
+        }
+
         let hasEdits = false;
         if (message == null) {
             if (cachedMessage != null && payload.message.content != null && cachedMessage.content !== payload.message.content) {
@@ -151,7 +181,7 @@ export async function messageUpdateHandler(payload: MessageUpdatePayload) {
             hasEdits = message.editHistory != null && message.editHistory.length > 0;
         }
 
-        if (previous?.attachments != null) {
+        if (settings.store.logDeletedAttachments !== false && previous?.attachments != null) {
             const base: LoggedMessageJSON = message == null
                 ? { ...previous }
                 : typeof (message as any).toJS === "function"
@@ -171,6 +201,10 @@ export async function messageUpdateHandler(payload: MessageUpdatePayload) {
         if (message == null || message.channel_id == null || !hasEdits) return false;
 
         const snapshot = typeof (message as any).toJS === "function" ? (message as any).toJS() : { ...message };
+        if (settings.store.logDeletedAttachments === false) {
+            snapshot.attachments = (payload.message.attachments ?? snapshot.attachments)?.filter((attachment: LoggedAttachment) => !attachment.deleted).map((attachment: LoggedAttachment) => ({ ...attachment }));
+            snapshot.editHistory = snapshot.editHistory?.map((edit: LoggedEdit) => ({ content: edit.content, timestamp: edit.timestamp }));
+        }
         snapshot.guildId = loggingScope.guildId(context);
         snapshot.author ??= fallback.author;
         return writeMessageRecord(snapshot, DBMessageStatus.EDITED);

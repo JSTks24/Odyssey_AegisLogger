@@ -24,6 +24,7 @@
         "@types/node": "26.0.1",
         "@types/react": "19.1.0",
         "fake-indexeddb": "^6.2.5",
+        "playwright": "1.58.2",
         "typescript": "^5.9.3",
         "vite": "^8.3.0",
         "vitest": "^3.2.4"

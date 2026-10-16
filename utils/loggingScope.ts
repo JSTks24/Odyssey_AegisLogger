@@ -52,6 +52,10 @@ function allowsMessage(message: any, fallback?: any): boolean {
     return allows(context(message, fallback));
 }
 
-const loggingScope = { allows, allowsMessage, context, guildId };
+function records(isEdit = false): boolean {
+    return settings.store[isEdit ? "logEdits" : "logDeletes"] !== false;
+}
+
+const loggingScope = { allows, allowsMessage, context, guildId, records };
 
 export default loggingScope;

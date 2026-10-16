@@ -36,7 +36,7 @@ vi.mock("../db", () => ({
 
 import idb, { type DBMessageRecord, DBMessageStatus } from "../db";
 import { settings } from "../index";
-import { addMessage, finalizeMessageWrite, flushWrites } from "../LoggedMessageManager";
+import { addMessage, finalizeMessageWrite, flushWrites, writeMessageRecord } from "../LoggedMessageManager";
 import { contentExcluded } from "../utils";
 import { cacheMessageImages } from "../utils/saveImage";
 
@@ -74,10 +74,29 @@ beforeEach(() => {
     vi.clearAllMocks();
     settings.store.saveImages = false;
     settings.store.messageLimit = 0;
+    settings.store.logDeletes = true;
+    settings.store.logEdits = true;
     vi.mocked(idb.getMessageIDB).mockResolvedValue(undefined);
 });
 
 describe("addMessage", () => {
+    it.each([DBMessageStatus.DELETED, DBMessageStatus.GHOST_PINGED, DBMessageStatus.EDITED])("does not enqueue disabled record type %s", async status => {
+        settings.store[status === DBMessageStatus.EDITED ? "logEdits" : "logDeletes"] = false;
+        await addMessage(makeMessage(), status);
+        expect(idb.getMessageIDB).not.toHaveBeenCalled();
+        expect(idb.addMessageIDB).not.toHaveBeenCalled();
+        expect(cacheMessageImages).not.toHaveBeenCalled();
+    });
+
+    it.each([DBMessageStatus.DELETED, DBMessageStatus.EDITED])("checks %s again after an awaited database read", async status => {
+        vi.mocked(idb.getMessageIDB).mockImplementationOnce(async () => {
+            settings.store[status === DBMessageStatus.EDITED ? "logEdits" : "logDeletes"] = false;
+            return undefined;
+        });
+        expect(await writeMessageRecord(makeMessage(), status)).toBe(false);
+        expect(idb.addMessageIDB).not.toHaveBeenCalled();
+    });
+
     it("stores the message with the given status", async () => {
         const message = makeMessage({ deleted: true });
 
