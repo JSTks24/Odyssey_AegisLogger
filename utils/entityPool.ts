@@ -9,6 +9,7 @@ import { ChannelStore, GuildStore, RelationshipStore, UserStore } from "@webpack
 import type { LogEntities } from "../db";
 import { t } from "./i18n";
 import { MatchCandidate } from "./idMatch";
+import logFields from "./logFields";
 
 type PoolKind = "user" | "server" | "channel";
 
@@ -18,7 +19,7 @@ function dmChannelLabel(channel: any): string | undefined {
     const names = recipients
         .map(id => UserStore.getUser?.(id))
         .filter(Boolean)
-        .map(user => user.globalName ?? user.username)
+        .map(user => logFields.firstString(logFields.globalName(user), user.username))
         .filter(Boolean);
     if (names.length === 0) return undefined;
     return names.join(", ");
@@ -36,8 +37,8 @@ function buildEntityPool(kind: PoolKind, logged: LogEntities | null): MatchCandi
         if (!id || entries.has(id)) return;
         entries.set(id, {
             id,
-            name: name ?? id,
-            username,
+            name: logFields.firstString(name) || id,
+            username: typeof username === "string" ? username : undefined,
             sub,
             typeLabel: t(`settings.type${type === "server" ? "Server" : type === "channel" ? "Channel" : "User"}`)
         });
@@ -46,21 +47,21 @@ function buildEntityPool(kind: PoolKind, logged: LogEntities | null): MatchCandi
     if (kind === "user") {
         for (const author of logged?.authors ?? []) {
             const user = UserStore.getUser?.(author.id);
-            push(author.id, user?.globalName ?? user?.username ?? author.globalName ?? author.username, "user", user?.username ?? author.username);
+            push(author.id, logFields.firstString(logFields.globalName(user), user?.username, logFields.globalName(author), author.username), "user", logFields.firstString(user?.username, author.username));
         }
 
         for (const friendId of (RelationshipStore.getFriendIDs?.() ?? [])) {
             const user = UserStore.getUsers?.()[friendId];
-            if (user) push(friendId, user.globalName ?? user.username, "user", user.username);
+            if (user) push(friendId, logFields.globalName(user) || user.username, "user", user.username);
         }
 
         for (const dmUserId of (ChannelStore.getDMUserIds?.() ?? [])) {
             const user = UserStore.getUsers?.()[dmUserId];
-            if (user) push(dmUserId, user.globalName ?? user.username, "user", user.username);
+            if (user) push(dmUserId, logFields.globalName(user) || user.username, "user", user.username);
         }
 
         for (const user of Object.values(UserStore.getUsers?.() ?? {}))
-            push(user.id, user.globalName ?? user.username, "user", user.username);
+            push(user.id, logFields.globalName(user) || user.username, "user", user.username);
     }
 
     if (kind === "server") {

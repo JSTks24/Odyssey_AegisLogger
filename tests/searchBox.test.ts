@@ -18,6 +18,11 @@ beforeEach(() => {
 });
 
 describe("removeTokens", () => {
+    it("removes filters separated by mixed whitespace without joining remaining words", () => {
+        const query = "hello\tbefore:2026-01-01\nworld\u3000after:2026-02-02\thas:image";
+        expect(searchBox.removeTokens(query, ["before", "after"])).toBe("hello\nworld\thas:image");
+    });
+
     it("drops every token of the given keys", () => {
         expect(searchBox.removeTokens("before:2026-01-01 hello after:2026-02-02", ["before", "after"])).toBe("hello");
         expect(searchBox.removeTokens("!before:2026-01-01", ["before", "after"])).toBe("");
@@ -31,6 +36,11 @@ describe("removeTokens", () => {
 });
 
 describe("submission", () => {
+    it("removes empty prefixes across all supported whitespace and preserves completed text", () => {
+        expect(searchBox.prepareSubmission("user:\tchannel:123\nhello\u3000!has:\tafter:")).toBe("channel:123\nhello");
+        expect(searchBox.prepareSubmission("user:123\thas:image\nhello\u3000world")).toBe("user:123\thas:image\nhello\u3000world");
+    });
+
     it("drops empty filter prefixes while retaining completed filters and free text", () => {
         expect(searchBox.prepareSubmission("has:image user:")).toBe("has:image");
         expect(searchBox.prepareSubmission("!channel: user:alice hello  world ")).toBe("user:alice hello  world");
@@ -40,6 +50,14 @@ describe("submission", () => {
 });
 
 describe("text replacement boundaries", () => {
+    it.each(["\t", "\n", "\u3000"])("recognizes %j beside replacement text", separator => {
+        expect(searchBox.replaceText("user:123 has:image", { start: 8, end: 9 }, separator + "中文" + separator)).toEqual({
+            query: "user:123" + separator + "中文" + separator + "has:image",
+            caret: 12,
+            length: 4
+        });
+    });
+
     it.each([
         { name: "leading insertion", query: "user:123", range: { start: 0, end: 0 }, value: "xx", expected: { query: "xx user:123", caret: 2, length: 3 } },
         { name: "trailing insertion", query: "user:123", range: { start: 8, end: 8 }, value: "xx", expected: { query: "user:123 xx", caret: 11, length: 3 } },
@@ -73,6 +91,24 @@ describe("text replacement boundaries", () => {
 });
 
 describe("ordered search segments", () => {
+    it("preserves offsets and every separator in a query with mixed whitespace", () => {
+        const query = "中文\tuser:123\r\nhello\u3000has:image\t!channel:456";
+        const parts = searchBox.segments(query);
+        expect(parts.map(part => part.raw).join("")).toBe(query);
+        expect(parts.filter(part => part.token).map(part => part.raw)).toEqual(["user:123", "has:image", "!channel:456"]);
+        for (const part of parts) expect(query.slice(part.start, part.end)).toBe(part.raw);
+        const token = parts.find(part => part.raw === "user:123")!;
+        expect(searchBox.segments(query, token).filter(part => part.token).map(part => part.raw)).toEqual(["has:image", "!channel:456"]);
+        expect(searchBox.removeRange(query, token)).toBe("中文\r\nhello\u3000has:image\t!channel:456");
+    });
+
+    it.each(["\t", "\n", "\u3000"])("finds a word bounded by %j", separator => {
+        const query = `hello${separator}user:123${separator}world`;
+        expect(searchBox.wordAt(query, 10)).toEqual({ start: 6, end: 14 });
+        expect(searchBox.wordAt(query, 14)).toEqual({ start: 6, end: 14 });
+        expect(searchBox.wordAt(query, 15)).toEqual({ start: 15, end: 20 });
+    });
+
     it.each([
         ["", []],
         ["hello world", []],

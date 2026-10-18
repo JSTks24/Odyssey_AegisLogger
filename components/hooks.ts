@@ -41,9 +41,9 @@ export interface messagePageRequest {
 
 export type messageLoadPhase = "initial" | "searching" | "more";
 
-function resolveLoadPhase(isLoadMore: boolean, query: string): messageLoadPhase {
+function resolveLoadPhase(isLoadMore: boolean, query: string, tabChanged = false): messageLoadPhase {
     if (isLoadMore) return "more";
-    if (query === "") return "initial";
+    if (query === "" && !tabChanged) return "initial";
     return "searching";
 }
 
@@ -165,47 +165,67 @@ function useMessages(query: string, currentTab: LogTabs, sortNewest: boolean, nu
     const [reloadVersion, setReloadVersion] = useState(0);
 
     const contextRef = useRef<messagePageCursor | null>(null);
+    const tabChanged = contextRef.current != null && contextRef.current.context.tab !== currentTab;
 
     const reset = useCallback(() => setReloadVersion(v => v + 1), []);
 
     useEffect(() => {
         let cancelled = false;
+        let frame: number | undefined;
         const isCancelled = () => cancelled;
 
         const previous = contextRef.current;
+        const tabChanged = previous != null && previous.context.tab !== currentTab;
         const context: messageLoadContext = { query, tab: currentTab, sortNewest, reload: reloadVersion };
         const request = planNextPage(previous, context, numDisplayedMessages);
         const { isLoadMore } = request;
 
+        if (previous == null || tabChanged) {
+            contextRef.current = { context, numDisplayed: numDisplayedMessages, records: [], rawOffset: 0 };
+            setMessages([]);
+            setHasMore(false);
+        }
+
         setPending(true);
         setError(null);
-        setPhase(resolveLoadPhase(isLoadMore, query));
+        setPhase(resolveLoadPhase(isLoadMore, query, tabChanged));
 
         const status = getStatus(currentTab);
 
-        loadMessagesPage(query, status, sortNewest, request.offset, request.limit, isCancelled, request.knownIds).then(result => {
+        const load = () => {
+            frame = undefined;
             if (cancelled) return;
 
-            const planned = isLoadMore && previous != null
-                ? planPageRecords(previous.records, result.records)
-                : { records: result.records };
+            loadMessagesPage(query, status, sortNewest, request.offset, request.limit, isCancelled, request.knownIds).then(result => {
+                if (cancelled) return;
 
-            const { records } = planned;
+                const planned = isLoadMore && previous != null
+                    ? planPageRecords(previous.records, result.records)
+                    : { records: result.records };
 
-            contextRef.current = { context, numDisplayed: numDisplayedMessages, records, rawOffset: result.nextOffset };
-            setMessages(records);
-            setHasMore(result.hasMore);
-            setPending(false);
-            setPhase(null);
-        }).catch(e => {
-            if (cancelled) return;
-            setError(e);
-            setPending(false);
-            setPhase(null);
+                const { records } = planned;
+
+                contextRef.current = { context, numDisplayed: numDisplayedMessages, records, rawOffset: result.nextOffset };
+                setMessages(records);
+                setHasMore(result.hasMore);
+                setPending(false);
+                setPhase(null);
+            }).catch(e => {
+                if (cancelled) return;
+                setError(e);
+                setPending(false);
+                setPhase(null);
+            });
+        };
+
+        if (query === "" && !tabChanged) load();
+        else frame = requestAnimationFrame(() => {
+            if (!cancelled) frame = requestAnimationFrame(load);
         });
 
         return () => {
             cancelled = true;
+            if (frame != null) cancelAnimationFrame(frame);
         };
     }, [query, currentTab, sortNewest, numDisplayedMessages, reloadVersion]);
 
@@ -221,15 +241,26 @@ function useMessages(query: string, currentTab: LogTabs, sortNewest: boolean, nu
         };
     }, [reloadVersion]);
 
-    return { messages, hasMore, total, pending, phase, error, reset, retry: reset };
+    return {
+        messages: tabChanged ? [] : messages,
+        hasMore: !tabChanged && hasMore,
+        total,
+        pending: tabChanged || pending,
+        phase: tabChanged ? "searching" as const : phase,
+        error: tabChanged ? null : error,
+        reset,
+        retry: reset
+    };
 }
 
 function useVisibleRecord(record: DBMessageRecord) {
     const ref = useRef<HTMLDivElement | null>(null);
     const [loaded, setLoaded] = useState<{ source: DBMessageRecord; display: DBMessageRecord } | null>(null);
+    const hasAttachments = (Array.isArray(record.message.attachments) && record.message.attachments.some(Boolean))
+        || (Array.isArray(record.message.editHistory) && record.message.editHistory.some(edit => Array.isArray(edit?.attachments) && edit.attachments.some(Boolean)));
 
     useEffect(() => {
-        if (!record.message.attachments?.length) return;
+        if (!hasAttachments) return;
         let cancelled = false;
         let started = false;
         let scope: leaseScope | null = null;
@@ -260,9 +291,9 @@ function useVisibleRecord(record: DBMessageRecord) {
             observer?.disconnect();
             scope?.release();
         };
-    }, [record]);
+    }, [record, hasAttachments]);
 
-    const ready = !record.message.attachments?.length || loaded?.source === record;
+    const ready = !hasAttachments || loaded?.source === record;
     return { ref, record: loaded?.source === record ? loaded.display : record, attachmentsPending: !ready };
 }
 

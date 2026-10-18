@@ -30,6 +30,7 @@
 }
 
 .aegis-modal-content-container {
+    position: relative;
     /* max-height: 80vh; */
     overflow: hidden;
     height: 100%;
@@ -39,6 +40,14 @@
 .aegis-modal-content {
     padding-bottom: 20px;
     height: 100%;
+}
+
+.aegis-modal-content-results {
+    height: 100%;
+}
+
+.aegis-modal-content-results[inert] {
+    opacity: 0.3;
 }
 
 .aegis-modal-content-inner {
@@ -245,14 +254,41 @@
     color: var(--text-muted, #b5bac1);
 }
 
-.aegis-modal-search-status {
-    padding: 6px 12px;
-    font-size: 13px;
+.aegis-modal-search-overlay {
+    position: absolute;
+    inset: 0;
+    z-index: 2;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 16px;
+    font-size: 16px;
+    font-weight: 600;
     text-align: center;
-    color: var(--text-muted, #b5bac1);
-    background: var(--background-base-low, rgba(151, 151, 159, 0.08));
-    border-radius: 8px;
-    margin: 0 12px 8px;
+    color: var(--text-default, #dbdee1);
+    background: color-mix(in srgb, var(--background-base-low, #2b2d31) 70%, transparent);
+    cursor: progress;
+}
+
+.aegis-modal-search-spinner {
+    width: 40px;
+    height: 40px;
+    box-sizing: border-box;
+    border: 4px solid color-mix(in srgb, var(--interactive-accent, #5865f2) 25%, transparent);
+    border-top-color: var(--interactive-accent, #5865f2);
+    border-radius: 50%;
+    animation: aegis-search-spin 0.8s linear infinite;
+}
+
+@keyframes aegis-search-spin {
+    to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .aegis-modal-search-spinner {
+        animation: none;
+    }
 }
 
 .aegis-modal-load-dot {
@@ -955,8 +991,7 @@
     overflow-wrap: anywhere;
 }
 
-.aegis-modal-snapshot-embed,
-.aegis-modal-snapshot-edit {
+.aegis-modal-snapshot-embed {
     margin-top: 8px;
     padding: 8px 12px;
     border-left: 3px solid var(--background-modifier-accent, #80848e);
@@ -991,16 +1026,34 @@
     max-width: 100%;
 }
 
-.aegis-modal-snapshot-history {
-    margin-top: 8px;
+.aegis-modal-edit-history {
+    margin: 0 var(--custom-message-margin-horizontal, 16px) 0 var(--custom-message-margin-left-content-cozy, 72px);
+    color: var(--text-muted, #80848e);
+    font-size: 1rem;
+    line-height: 1.375;
 }
 
-.aegis-modal-snapshot-history summary {
-    cursor: pointer;
+.aegis-modal-snapshot + .aegis-modal-edit-history {
+    margin: 0 12px;
 }
 
-.aegis-modal-snapshot-empty,
-.aegis-modal-snapshot-edit time {
+.aegis-modal-snapshot .aegis-modal-edit-history {
+    margin: 0;
+    font-size: inherit;
+}
+
+.aegis-modal-edit-version {
+    color: var(--text-muted, #80848e);
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+}
+
+.aegis-modal-edit-marker {
+    font-size: 0.625rem;
+    white-space: nowrap;
+}
+
+.aegis-modal-snapshot-empty {
     color: var(--text-muted);
     font-size: 12px;
 }

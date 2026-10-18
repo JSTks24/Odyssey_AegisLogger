@@ -27,7 +27,7 @@ const msg = {
 beforeEach(() => {
     parseQuery.clear();
     webpackCommon.GuildStore.getGuild = (id: string) => (id === "guild-1" ? { id: "guild-1", name: "Test Guild" } : null);
-    webpackCommon.ChannelStore.getChannel = (id: string) => (id === "chan-1" ? { id: "chan-1", name: "general" } : null);
+    webpackCommon.ChannelStore.getChannel = (id: string) => id === "chan-1" ? { id: "chan-1", name: "general" } : id === "chan-with-guild" ? { id, guild_id: "guild-1" } : null;
 });
 
 describe("tokenizeQuery", () => {
@@ -144,7 +144,7 @@ describe("date tokens", () => {
     });
 
     it("excludes messages exactly at the boundary date", () => {
-        const exact = { ...msg, timestamp: "2026-01-01T00:00:00.000Z" } as any;
+        const exact = { ...msg, timestamp: new Date(2026, 0, 1).toISOString() } as any;
         expect(doesMatch("before", "2026-01-01", exact)).toBe(false);
         expect(doesMatch("after", "2026-01-01", exact)).toBe(false);
     });

@@ -7,7 +7,11 @@
 import { ChannelStore, GuildStore } from "@webpack/common";
 
 import type { DBMessageRecord } from "../db";
+import attachmentFiles from "./attachmentFiles";
+import calendar from "./calendar";
+import channelGuildId from "./channelGuildId";
 import { normalizeTimestampMs } from "./constants";
+import logFields from "./logFields";
 import { linkRegex, QueryResult } from "./parseQuery";
 
 const entries = new Map<string, indexedMessage>();
@@ -29,6 +33,7 @@ interface indexedMessage {
     timestampMs: number;
     status: string;
     content: string;
+    contents: string[];
     attachment: boolean;
     image: boolean;
     video: boolean;
@@ -40,33 +45,33 @@ interface indexedMessage {
 
 function buildEntry(record: DBMessageRecord): indexedMessage {
     const { message } = record;
-    const attachments = Array.isArray(message.attachments) ? message.attachments : [];
-    const embeds = Array.isArray(message.embeds) ? message.embeds : [];
-    const rawContent = (message as any).content;
-    const content = typeof rawContent === "string" ? rawContent : "";
-    const hasType = (prefix: string) => attachments.some(a => (a as any).content_type?.startsWith(prefix));
+    const attachments = Array.isArray(message.attachments) ? message.attachments.filter(a => a != null && typeof a === "object") : [];
+    const embeds = Array.isArray(message.embeds) ? message.embeds.filter(e => e != null && typeof e === "object") : [];
+    const contents = logFields.contents(message).map(content => content.toLowerCase());
+    const hasType = (prefix: string) => attachments.some(a => attachmentFiles.contentType(a).startsWith(prefix));
 
     return {
         id: record.message_id,
         channelId: record.channel_id,
-        guildId: (message as any).guildId ?? ChannelStore.getChannel(record.channel_id)?.guild_id ?? "",
-        authorId: (message as any).author?.id ?? "",
-        username: ((message as any).author?.username ?? "").toLowerCase(),
-        globalName: ((message as any).author?.globalName ?? "").toLowerCase(),
+        guildId: logFields.guildId(message) || channelGuildId(record.channel_id) || "",
+        authorId: logFields.string(message.author?.id),
+        username: logFields.string(message.author?.username).toLowerCase(),
+        globalName: logFields.globalName(message.author).toLowerCase(),
         timestamp: message.timestamp,
         timestampMs: normalizeTimestampMs(message),
         status: record.status,
-        content: content.toLowerCase(),
+        content: contents[0],
+        contents,
         attachment: attachments.length > 0,
-        image: hasType("image") || embeds.some(e => e.image || e.thumbnail),
-        video: hasType("video") || embeds.some(e => e.video),
+        image: attachments.some(attachmentFiles.isImageAttachment) || embeds.some(e => e.image != null && typeof e.image === "object" || e.thumbnail != null && typeof e.thumbnail === "object"),
+        video: hasType("video/") || embeds.some(e => e.video != null && typeof e.video === "object"),
         file: attachments.some(a => {
-            const type = (a as any).content_type;
-            return !type?.startsWith("image") && !type?.startsWith("video") && !type?.startsWith("audio");
+            const type = attachmentFiles.contentType(a);
+            return !attachmentFiles.isImageAttachment(a) && !type.startsWith("video/") && !type.startsWith("audio/");
         }),
-        sound: hasType("audio"),
+        sound: hasType("audio/"),
         embed: embeds.length > 0,
-        link: linkRegex.test(content)
+        link: contents.some(content => linkRegex.test(content))
     };
 }
 
@@ -242,7 +247,7 @@ function forEach(callback: (entry: indexedMessage) => void) {
 function search(queries: QueryResult[], rest: string[], status: string, limit: number, newest: boolean, offset = 0) {
     const compiled = queries.map(query =>
         query.key === "before" || query.key === "after" || query.key === "around" || query.key === "near" || query.key === "during"
-            ? { ...query, ts: Date.parse(query.value) }
+            ? { ...query, ts: calendar.dateTimestamp(query.value) }
             : query
     );
 
@@ -277,7 +282,7 @@ function matchesIndex(entry: indexedMessage, queries: QueryResult[], rest: strin
         if (query.negate ? matching : !matching) return false;
     }
 
-    return rest.every(part => entry.content.includes(part.toLowerCase()));
+    return entry.contents.some(content => rest.every(part => content.includes(part.toLowerCase())));
 }
 
 function matchesQuery(entry: indexedMessage, query: QueryResult & { ts?: number; }) {
@@ -286,7 +291,7 @@ function matchesQuery(entry: indexedMessage, query: QueryResult & { ts?: number;
         case "channel": {
             const channel = ChannelStore.getChannel(entry.channelId);
             if (!channel) return entry.channelId === query.value;
-            return channel.id === query.value || (channel.name ?? "").toLowerCase().includes(query.value.toLowerCase());
+            return channel.id === query.value || logFields.string(channel.name).toLowerCase().includes(query.value.toLowerCase());
         }
         case "message":
             return entry.id === query.value;
@@ -299,23 +304,24 @@ function matchesQuery(entry: indexedMessage, query: QueryResult & { ts?: number;
         }
         case "guild":
         case "server": {
-            if (!entry.guildId) return false;
-            const guild = GuildStore.getGuild(entry.guildId);
-            if (!guild) return entry.guildId === query.value;
-            return guild.id === query.value || guild.name.toLowerCase().includes(query.value.toLowerCase());
+            const guildId = entry.guildId || channelGuildId(entry.channelId);
+            if (!guildId) return false;
+            const guild = GuildStore.getGuild(guildId);
+            if (!guild) return guildId === query.value;
+            return guild.id === query.value || logFields.string(guild.name).toLowerCase().includes(query.value.toLowerCase());
         }
         case "before": {
-            const ts = query.ts ?? Date.parse(query.value);
+            const ts = query.ts ?? calendar.dateTimestamp(query.value);
             return Number.isNaN(ts) ? false : entry.timestampMs < ts;
         }
         case "after": {
-            const ts = query.ts ?? Date.parse(query.value);
+            const ts = query.ts ?? calendar.dateTimestamp(query.value);
             return Number.isNaN(ts) ? false : entry.timestampMs > ts;
         }
         case "around":
         case "near":
         case "during": {
-            const ts = query.ts ?? Date.parse(query.value);
+            const ts = query.ts ?? calendar.dateTimestamp(query.value);
             return Number.isNaN(ts) ? false : Math.abs(entry.timestampMs - ts) < 1000 * 60 * 60 * 24;
         }
         case "has":

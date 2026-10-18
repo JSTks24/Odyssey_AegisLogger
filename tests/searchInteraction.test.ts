@@ -236,6 +236,58 @@ afterEach(() => {
 });
 
 describe("search editor keyboard interactions", () => {
+    it("renders, edits and deletes filters separated by mixed whitespace", () => {
+        const editor = createEditor("hello\tuser:1111\nworld\u3000has:image\tend");
+        expect(editor.nodes().filter(node => node.props["data-token-index"] != null)).toHaveLength(2);
+        expect(editor.nodes().filter(node => node.type === "input").map(node => node.props.value)).toEqual(["hello\t", " world\u3000", "\tend"]);
+        editor.selectToken(0);
+        editor.focusText(1);
+        editor.type("Alice");
+        editor.key("ArrowDown");
+        editor.key("Enter");
+        expect(editor.query()).toBe("hello\tuser:123\nworld\u3000has:image\tend");
+        editor.selectToken(1);
+        editor.key("Delete");
+        expect(editor.query()).toBe("hello\tuser:123\nworld\tend");
+        editor.key("Enter");
+        expect(editor.submit).toHaveBeenCalledExactlyOnceWith("hello\tuser:123\nworld\tend");
+    });
+
+    it("keeps pasted filter selection offsets across Tab and full-width separators", () => {
+        const editor = createEditor("before after");
+        editor.focusText(0, 7, 12);
+        editor.paste("user:1111\thas:image\u3000channel:2222");
+        expect(editor.query()).toBe("before user:1111\thas:image\u3000channel:2222");
+        expect(editor.nodes().filter(node => node.props["data-token-index"] != null)).toHaveLength(3);
+        expect(editor.caret()).toBe(editor.query().length);
+        editor.key("Enter");
+        expect(editor.submit).toHaveBeenCalledExactlyOnceWith("before user:1111\thas:image\u3000channel:2222");
+    });
+
+    it("displays line breaks with equal-length spaces while preserving the original query", () => {
+        const editor = createEditor("user:123\r\nworld\thas:image");
+        const middle = editor.nodes().filter(node => node.type === "input")[1];
+        expect(middle.props.value).toBe("  world\t");
+        expect(middle.props["data-text-end"] - middle.props["data-text-start"]).toBe(middle.props.value.length);
+        editor.key("Enter");
+        expect(editor.submit).toHaveBeenCalledExactlyOnceWith("user:123\r\nworld\thas:image");
+    });
+
+    it("keeps Chinese composition beside a full-width filter separator", () => {
+        const editor = createEditor("user:123\u3000");
+        editor.focusText(1);
+        editor.composition(true);
+        editor.type("\u3000中");
+        editor.type("\u3000中文");
+        expect(editor.query()).toBe("user:123\u3000中文");
+        expect(editor.nodes().filter(node => node.type === "input").at(-1)?.props.value).toBe("\u3000中文");
+        editor.key("Enter", { isComposing: true });
+        expect(editor.submit).not.toHaveBeenCalled();
+        editor.composition(false);
+        editor.key("Enter");
+        expect(editor.submit).toHaveBeenCalledExactlyOnceWith("user:123\u3000中文");
+    });
+
     it("keeps typing in the draft until Enter submits it once", () => {
         const editor = createEditor();
         editor.focus();

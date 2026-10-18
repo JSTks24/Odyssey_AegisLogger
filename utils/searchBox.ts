@@ -19,7 +19,7 @@ export interface searchSegment extends searchRange {
 function segments(query: string, editing?: searchRange | null): searchSegment[] {
     const result: searchSegment[] = [];
     let start = 0;
-    for (const match of query.matchAll(/[^ ]+/g)) {
+    for (const match of query.matchAll(/\S+/g)) {
         const from = match.index!;
         const end = from + match[0].length;
         if (editing && from < editing.end && end > editing.start) continue;
@@ -34,8 +34,11 @@ function segments(query: string, editing?: searchRange | null): searchSegment[] 
 }
 
 function wordAt(query: string, caret: number): searchRange {
-    const end = query.indexOf(" ", caret);
-    return { start: caret <= 0 ? 0 : query.lastIndexOf(" ", caret - 1) + 1, end: end < 0 ? query.length : end };
+    let start = Math.max(0, Math.min(caret, query.length));
+    let end = start;
+    while (start > 0 && !/\s/.test(query[start - 1])) start--;
+    while (end < query.length && !/\s/.test(query[end])) end++;
+    return { start, end };
 }
 
 function replaceRange(query: string, range: searchRange, value: string) {
@@ -49,8 +52,8 @@ function replaceText(query: string, range: searchRange, value: string, caret = v
         value = "";
         caret = 0;
     }
-    const prefix = before && value !== "" && !value.startsWith(" ") ? " " : "";
-    const suffix = after && (value !== "" ? !value.endsWith(" ") : before) ? " " : "";
+    const prefix = before && value !== "" && !/^\s/.test(value) ? " " : "";
+    const suffix = after && (value !== "" ? !/\s$/.test(value) : before) ? " " : "";
     const text = prefix + value + suffix;
     return {
         query: replaceRange(query, range, text),
@@ -62,22 +65,20 @@ function replaceText(query: string, range: searchRange, value: string, caret = v
 function removeRange(query: string, range: searchRange) {
     const before = query.slice(0, range.start);
     const after = query.slice(range.end);
-    return (before.endsWith(" ") && after.startsWith(" ") ? before.slice(0, -1) + after : before + after).trim();
+    return (/\s$/.test(before) && /^\s/.test(after) ? before.slice(0, -1) + after : before + after).trim();
 }
 
 function removeTokens(query: string, keys: string[]) {
     return query
-        .split(" ")
-        .filter(part => {
+        .replace(/(^|\s)(\S+)/g, (raw, _separator, part) => {
             const parsed = parseQuery(part);
-            return typeof parsed === "string" || !keys.includes(parsed.key);
+            return typeof parsed === "string" || !keys.includes(parsed.key) ? raw : "";
         })
-        .join(" ")
         .trim();
 }
 
 function prepareSubmission(query: string) {
-    return query.split(" ").filter(part => !/^!?(?:user|from|channel|in|server|guild|has|before|after|during|near|around|message):$/.test(part)).join(" ").trim();
+    return query.replace(/(^|\s)!?(?:user|from|channel|in|server|guild|has|before|after|during|near|around|message):(?=\s|$)/g, "").trim();
 }
 
 const searchBox = {

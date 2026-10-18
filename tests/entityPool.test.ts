@@ -29,6 +29,18 @@ beforeEach(() => {
 });
 
 describe("user pool", () => {
+    it("accepts snake case display names from logged authors and cached users", () => {
+        const logged = { authors: [{ id: "u1", globalName: "", global_name: "Old Display", username: "old" }], guildIds: [], channelIds: [] };
+        expect(entityPool.buildEntityPool("user", logged)[0]).toMatchObject({ id: "u1", name: "Old Display" });
+        webpackCommon.UserStore.getUser = () => ({ id: "u1", global_name: "Current Display", username: "current" });
+        expect(entityPool.buildEntityPool("user", logged)[0]).toMatchObject({ id: "u1", name: "Current Display", username: "current" });
+    });
+
+    it("ignores malformed optional names and keeps the candidate addressable by id", () => {
+        const logged = { authors: [{ id: "u1", username: 123, globalName: [] }], guildIds: [], channelIds: [] } as any;
+        expect(entityPool.buildEntityPool("user", logged)[0]).toMatchObject({ id: "u1", name: "u1" });
+    });
+
     it("prefers store users over lowercased log data for authors", () => {
         webpackCommon.UserStore.getUser = (id: string) => (id === "u1" ? { id: "u1", username: "Alice", globalName: "Alice Display" } : null);
 

@@ -527,8 +527,8 @@ export default function FilterBar({ query, onChange, onSubmit, placeholder, acti
         const current = existing ?? (kind === "has" ? undefined : searchBox.segments(base).find(segment => segment.token && (CANONICAL_KIND[segment.token.key] ?? segment.token.key) === kind && segment.token.negate === negate));
         const position = Math.max(0, Math.min(caretRef.current, base.length));
         const range = current ?? { start: position, end: position };
-        const before = !current && position > 0 && base[position - 1] !== " " ? " " : "";
-        const after = !current && position < base.length && base[position] !== " " ? " " : "";
+        const before = !current && position > 0 && !/\s/.test(base[position - 1]) ? " " : "";
+        const after = !current && position < base.length && !/\s/.test(base[position]) ? " " : "";
         const next = searchBox.replaceRange(base, range, before + raw + after);
         const start = range.start + before.length;
         return { next, start, end: start + raw.length };
@@ -865,7 +865,7 @@ export default function FilterBar({ query, onChange, onSubmit, placeholder, acti
             data-text-start={segment.start}
             data-text-end={segment.end}
             data-pick-input={key === "pick" ? "true" : undefined}
-            value={!externalChange && composingInputRef.current?.key === key ? composingInputRef.current.value : segment.raw}
+            value={!externalChange && composingInputRef.current?.key === key ? composingInputRef.current.value : segment.raw.replace(/[\r\n]/g, " ")}
             size={Math.max(1, segment.raw.replace(/[^\x00-\x7f]/g, "aa").length)}
             style={{ flexGrow: last ? 1 : 0, width: segment.raw === "" ? 1 : undefined, position: segment.raw === "" && !last ? "absolute" : undefined }}
             placeholder={query === "" ? placeholder : ""}

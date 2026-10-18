@@ -19,8 +19,12 @@
 import { ChannelStore, GuildStore } from "@webpack/common";
 
 import { LoggedMessageJSON } from "../types";
+import attachmentFiles from "./attachmentFiles";
+import calendar from "./calendar";
+import channelGuildId from "./channelGuildId";
+import { normalizeTimestampMs } from "./constants";
+import logFields from "./logFields";
 import { memoize } from "./memoize";
-import { getGuildIdByChannel } from "./misc";
 
 
 const validIdSearchTypes = ["server", "guild", "channel", "in", "user", "from", "message", "has", "before", "after", "around", "near", "during"] as const;
@@ -60,7 +64,7 @@ export const parseQuery = memoize((query: string = ""): QueryResult | string => 
         trimmedQuery = trimmedQuery.substring(1);
     }
 
-    const [filter, rest] = trimmedQuery.split(" ", 2);
+    const [filter] = trimmedQuery.split(/\s+/, 2);
     if (!filter) {
         return query;
     }
@@ -82,7 +86,7 @@ export const parseQuery = memoize((query: string = ""): QueryResult | string => 
 });
 
 export const tokenizeQuery = (query: string) => {
-    const parts = query.split(" ").map(parseQuery);
+    const parts = query.split(/\s+/).filter(Boolean).map(parseQuery);
     const queries = parts.filter(p => typeof p !== "string") as QueryResult[];
     const rest = parts.filter(p => typeof p === "string") as string[];
 
@@ -91,14 +95,14 @@ export const tokenizeQuery = (query: string) => {
 
 export const removeQueryToken = (query: string, raw: string) =>
     query
-        .split(" ")
+        .split(/\s+/)
         .filter(token => token !== raw)
         .join(" ")
         .trim();
 
 export const upsertQueryToken = (query: string, key: string, token: string, negate = false, multi = false) => {
     const kept = query
-        .split(" ")
+        .split(/\s+/)
         .filter(Boolean)
         .filter(part => {
             const parsed = parseQuery(part);
@@ -113,6 +117,11 @@ export const upsertQueryToken = (query: string, key: string, token: string, nega
 export const linkRegex = /[-a-zA-Z0-9@:%._+~#=]{1,256}\.[a-zA-Z0-9()]{1,6}\b([-a-zA-Z0-9()@:%_+.~#?&//=]*)/;
 
 export const doesMatch = (type: typeof validIdSearchTypes[number], value: string, message: LoggedMessageJSON) => {
+    if (message == null || typeof message !== "object") return false;
+    const attachments = Array.isArray(message.attachments) ? message.attachments.filter(a => a != null && typeof a === "object") : [];
+    const embeds = Array.isArray(message.embeds) ? message.embeds.filter(e => e != null && typeof e === "object") : [];
+    const hasType = (prefix: string) => attachments.some(a => attachmentFiles.contentType(a).startsWith(prefix));
+
     switch (type) {
         case "in":
         case "channel":
@@ -121,17 +130,17 @@ export const doesMatch = (type: typeof validIdSearchTypes[number], value: string
                 return message.channel_id === value;
             const { name, id } = channel;
             return id === value
-                || (name ?? "").toLowerCase().includes(value.toLowerCase());
+                || logFields.string(name).toLowerCase().includes(value.toLowerCase());
         case "message":
             return message.id === value;
         case "from":
         case "user":
-            return message.author.id === value
-                || message.author?.username?.toLowerCase().includes(value.toLowerCase())
-                || (message.author as any)?.globalName?.toLowerCase()?.includes(value.toLowerCase());
+            return message.author?.id === value
+                || logFields.string(message.author?.username).toLowerCase().includes(value.toLowerCase())
+                || logFields.globalName(message.author).toLowerCase().includes(value.toLowerCase());
         case "guild":
         case "server": {
-            const guildId = message.guildId ?? getGuildIdByChannel(message.channel_id);
+            const guildId = logFields.guildId(message) || channelGuildId(message.channel_id);
             if (!guildId) return false;
 
             const guild = GuildStore.getGuild(guildId);
@@ -139,37 +148,36 @@ export const doesMatch = (type: typeof validIdSearchTypes[number], value: string
                 return guildId === value;
 
             return guild.id === value
-                || guild.name.toLowerCase().includes(value.toLowerCase());
+                || logFields.string(guild.name).toLowerCase().includes(value.toLowerCase());
         }
         case "before":
-            return new Date(message.timestamp) < new Date(value);
+            return normalizeTimestampMs(message) < calendar.dateTimestamp(value);
         case "after":
-            return new Date(message.timestamp) > new Date(value);
+            return normalizeTimestampMs(message) > calendar.dateTimestamp(value);
         case "around":
         case "near":
         case "during":
-            return Math.abs(new Date(message.timestamp).getTime() - new Date(value).getTime()) < 1000 * 60 * 60 * 24;
+            return Math.abs(normalizeTimestampMs(message) - calendar.dateTimestamp(value)) < 1000 * 60 * 60 * 24;
         case "has": {
             switch (value) {
                 case "attachment":
-                    return message.attachments.length > 0;
+                    return attachments.length > 0;
                 case "image":
-                    return message.attachments.some(a => a.content_type?.startsWith("image")) ||
-                        message.embeds.some(e => e.image || e.thumbnail);
+                    return attachments.some(attachmentFiles.isImageAttachment) ||
+                        embeds.some(e => e.image != null && typeof e.image === "object" || e.thumbnail != null && typeof e.thumbnail === "object");
                 case "video":
-                    return message.attachments.some(a => a.content_type?.startsWith("video")) ||
-                        message.embeds.some(e => e.video);
+                    return hasType("video/") || embeds.some(e => e.video != null && typeof e.video === "object");
                 case "embed":
-                    return message.embeds.length > 0;
+                    return embeds.length > 0;
                 case "link":
-                    return message.content.match(linkRegex);
+                    return logFields.contents(message).some(content => linkRegex.test(content));
                 case "file":
-                    return message.attachments.some(a =>
-                        !a.content_type?.startsWith("image")
-                        && !a.content_type?.startsWith("video")
-                        && !a.content_type?.startsWith("audio"));
+                    return attachments.some(a =>
+                        !attachmentFiles.isImageAttachment(a)
+                        && !attachmentFiles.contentType(a).startsWith("video/")
+                        && !attachmentFiles.contentType(a).startsWith("audio/"));
                 case "sound":
-                    return message.attachments.some(a => a.content_type?.startsWith("audio"));
+                    return hasType("audio/");
                 default:
                     return false;
             }

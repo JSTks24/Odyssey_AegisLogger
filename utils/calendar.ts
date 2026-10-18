@@ -24,6 +24,15 @@ function parseISODate(iso: string) {
     return { year, monthIndex: month - 1, day };
 }
 
+function dateTimestamp(value: string) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return Date.parse(value);
+    const { year, monthIndex, day } = parseISODate(value);
+    const date = new Date(0);
+    date.setFullYear(year, monthIndex, day);
+    date.setHours(0, 0, 0, 0);
+    return date.getFullYear() === year && date.getMonth() === monthIndex && date.getDate() === day ? date.getTime() : NaN;
+}
+
 function todayISO() {
     const now = new Date();
     return toISODate(now.getFullYear(), now.getMonth(), now.getDate());
@@ -97,6 +106,7 @@ const calendar = {
     GRID_WEEKS,
     toISODate,
     parseISODate,
+    dateTimestamp,
     todayISO,
     addMonths,
     getWeekStart,

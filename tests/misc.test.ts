@@ -193,6 +193,13 @@ describe("splitRemovedAttachments", () => {
 });
 
 describe("isImageAttachment", () => {
+    it("uses a valid MIME before a conflicting filename and safely falls back for malformed MIME", () => {
+        expect(isImageAttachment({ content_type: "video/mp4", filename: "photo.png" } as any)).toBe(false);
+        expect(isImageAttachment({ content_type: 123, filename: "photo.png" } as any)).toBe(true);
+        expect(isImageAttachment({ content_type: false, filename: 123 } as any)).toBe(false);
+        expect(isImageAttachment(null as any)).toBe(false);
+    });
+
     it("detects images by content type", () => {
         expect(isImageAttachment({ content_type: "image/png" } as any)).toBe(true);
         expect(isImageAttachment({ content_type: "video/mp4" } as any)).toBe(false);

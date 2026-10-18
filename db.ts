@@ -5,9 +5,11 @@
  */
 
 import { LoggedAttachment, LoggedMessageJSON } from "./types";
+import channelGuildId from "./utils/channelGuildId";
 import { DB_NAME, DB_VERSION, normalizeTimestampMs } from "./utils/constants";
 import { DBSchema, IDBPDatabase, openDB } from "./utils/idb";
 import { LimitedMap } from "./utils/LimitedMap";
+import logFields from "./utils/logFields";
 import messageChanges from "./utils/messageChanges";
 import { acquireAttachmentBlobUrl, attachmentLease, clearAttachmentBlobCache, createLeaseScope, displayAttachmentUrl, leaseScope } from "./utils/saveImage";
 import searchIndex from "./utils/searchIndex";
@@ -253,7 +255,8 @@ async function getDistinctLogEntities(): Promise<LogEntities> {
     if (searchIndex.isReady()) {
         searchIndex.forEach(entry => {
             if (entry.authorId) authors.set(entry.authorId, { id: entry.authorId, username: entry.username, globalName: entry.globalName });
-            if (entry.guildId) guildIds.add(entry.guildId);
+            const guildId = entry.guildId || channelGuildId(entry.channelId);
+            if (guildId) guildIds.add(guildId);
             if (entry.channelId) channelIds.add(entry.channelId);
         });
 
@@ -263,9 +266,11 @@ async function getDistinctLogEntities(): Promise<LogEntities> {
     for await (const batch of iterateRawMessagesIDB(200)) {
         for (const record of batch) {
             const m = record.message;
+            if (m == null || typeof m !== "object") continue;
             if (m.author?.id)
-                authors.set(m.author.id, { id: m.author.id, username: m.author.username, globalName: (m.author as any).globalName });
-            if (m.guildId) guildIds.add(m.guildId);
+                authors.set(m.author.id, { id: m.author.id, username: logFields.string(m.author.username), globalName: logFields.globalName(m.author) });
+            const guildId = logFields.guildId(m) || channelGuildId(record.channel_id);
+            if (guildId) guildIds.add(guildId);
             if (m.channel_id) channelIds.add(m.channel_id);
         }
     }

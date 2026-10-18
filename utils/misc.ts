@@ -18,10 +18,12 @@
 
 import { PluginNative } from "@utils/types";
 import { findByCodeLazy, findLazy } from "@webpack";
-import { ChannelStore, moment, UserStore } from "@webpack/common";
+import { moment, UserStore } from "@webpack/common";
 
 import { DBMessageStatus } from "../db";
 import { LoggedAttachment, LoggedMessageJSON } from "../types";
+import attachmentFiles from "./attachmentFiles";
+import channelGuildId from "./channelGuildId";
 import { DEFAULT_IMAGE_CACHE_DIR,DISCORD_EPOCH } from "./constants";
 import { memoize } from "./memoize";
 
@@ -30,17 +32,7 @@ const AuthorClass = findLazy(m => m?.prototype?.getAvatarURL);
 const sanitizeEmbed = findByCodeLazy('"embed_"),');
 
 export function getGuildIdByChannel(channel_id: string): string | undefined {
-    const visited = new Set<string>();
-    let current: string | undefined = channel_id;
-
-    while (current && !visited.has(current) && visited.size < 32) {
-        visited.add(current);
-        const channel = ChannelStore.getChannel(current);
-        if (channel == null) return;
-        const guildId = channel.guild_id || (channel as any).guildId || channel.getGuildId?.();
-        if (guildId) return guildId;
-        current = channel.parent_id ?? (channel as any).parentId;
-    }
+    return channelGuildId(channel_id);
 }
 
 export const isGhostPinged = (message?: LoggedMessageJSON) => {
@@ -111,8 +103,7 @@ export function splitRemovedAttachments(attachments?: LoggedAttachment[] | null)
 }
 
 export function isImageAttachment(attachment: LoggedAttachment) {
-    if (attachment.content_type?.startsWith("image")) return true;
-    return /\.(png|jpe?g|gif|webp|bmp|avif|apng)$/i.test(attachment.filename ?? "");
+    return attachmentFiles.isImageAttachment(attachment);
 }
 
 export const messageJsonToMessageClass = memoize((log: { message: LoggedMessageJSON; }) => {

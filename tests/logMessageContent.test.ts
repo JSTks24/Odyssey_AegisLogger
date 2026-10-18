@@ -8,6 +8,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
     convert: vi.fn(),
+    parse: vi.fn(),
     acquire: vi.fn(),
     retain: vi.fn(),
     effect: vi.fn(),
@@ -28,6 +29,9 @@ vi.mock("@webpack/common", () => {
     };
     return {
         React,
+        Parser: { parse: mocks.parse },
+        SelectedChannelStore: { getChannelId: () => "selected-channel" },
+        Timestamp: ({ timestamp, children }: any) => ({ type: "time", props: { "data-timestamp": timestamp.toISOString(), children } }),
         useEffect: mocks.effect,
         useState: (initial: any) => {
             const index = mocks.cursor++;
@@ -46,7 +50,7 @@ vi.mock("@utils/react", async () => {
 });
 vi.mock("../utils", () => ({
     messageJsonToMessageClass: mocks.convert,
-    isImageAttachment: (attachment: any) => attachment.content_type?.startsWith("image/") || /\.(png|jpe?g|gif|webp)$/i.test(attachment.filename ?? ""),
+    isImageAttachment: (attachment: any) => (typeof attachment.content_type === "string" && attachment.content_type.startsWith("image/")) || /\.(png|jpe?g|gif|webp)$/i.test(attachment.filename ?? ""),
     splitRemovedAttachments: (attachments: any[]) => ({ live: attachments.filter(attachment => !attachment.deleted), removed: attachments.filter(attachment => attachment.deleted) })
 }));
 vi.mock("../utils/i18n", () => ({ t: (key: string) => key }));
@@ -123,6 +127,7 @@ function snapshotAttachment(attachment: any) {
 
 beforeEach(() => {
     mocks.convert.mockReset().mockImplementation(({ message }) => message);
+    mocks.parse.mockReset().mockImplementation(content => ({ type: "parsed-edit", props: { children: content } }));
     mocks.acquire.mockReset().mockResolvedValue(null);
     mocks.retain.mockReset().mockReturnValue(null);
     mocks.effect.mockReset();
@@ -188,16 +193,112 @@ describe("log message content", () => {
             embeds: [{ title: "embed title", description: "embed body", url: "https://example.test", fields: [{ name: "field", value: "field value" }] }],
             editHistory: [{ timestamp: "2026-10-08T00:59:00Z", content: "previous body", attachments: [{ id: "a1", filename: "removed.png", url: "https://expired.test/removed.png" }] }]
         });
-        const initial = content.MessageSnapshot({ record: source });
-        expect(textContent(initial)).not.toContain("previous body");
-        nodes(initial, "details")[0].props.onToggle({ currentTarget: { open: true } });
-        mocks.cursor = 0;
         const rendered = renderTree(content.MessageSnapshot({ record: source }));
         expect(textContent(rendered)).toContain("previous body");
         expect(textContent(rendered)).toContain("embed title\nembed body\nhttps://example.test\nfield\nfield value");
-        expect(nodes(rendered, "details")).toHaveLength(1);
+        expect(nodes(rendered, "details")).toHaveLength(0);
+        expect(nodes(rendered, "summary")).toHaveLength(0);
         expect(nodes(rendered, "img").every(image => image.props.src === "blob:archived#")).toBe(true);
         expect(textContent(rendered)).toContain("modal.attachmentRemoved");
+    });
+
+    it.each([undefined, { editHistory: [] }, { editHistory: [{ content: "stale cached body" }] }, { editHistory: [{ content: "previous body" }] }])("shows every saved edit independently of the chat cache: %j", cached => {
+        const source = record({
+            editHistory: [
+                { timestamp: "2026-10-08T00:58:00Z", content: "最早的正文" },
+                { timestamp: "2026-10-08T00:59:00Z", content: "previous body" }
+            ]
+        });
+        const native = vi.fn(({ message }) => ({ type: "native-message", props: { children: [message.content, ...(message.editHistory?.length ? cached?.editHistory?.map(edit => edit.content) ?? [] : [])] } }));
+        const prepared = content.prepareMessage(source);
+        const rendered = renderContent(source, {
+            message: prepared.message,
+            channel: { id: "c1" },
+            modules: { messagePreview: native, privateChannelRecord: null, version: 1 }
+        });
+        expect(textContent(rendered)).toContain("archived message body");
+        expect(textContent(rendered)).toContain("最早的正文");
+        expect(textContent(rendered).match(/previous body/g)).toHaveLength(1);
+        expect(textContent(rendered)).not.toContain("stale cached body");
+        expect(nodes(rendered, "time").map(node => node.props["data-timestamp"])).toEqual(["2026-10-08T00:58:00.000Z", "2026-10-08T00:59:00.000Z"]);
+        expect(native.mock.calls[0][0].message.editHistory).toEqual([]);
+        expect(source.editHistory).toHaveLength(2);
+    });
+
+    it("shows saved edits immediately when the native preview throws", () => {
+        const source = record({ editHistory: [{ content: "保存的旧正文", timestamp: "2026-10-08T00:59:00Z" }] });
+        const rendered = renderContent(source, {
+            message: content.prepareMessage(source).message,
+            channel: { id: "c1" },
+            modules: { messagePreview: () => { throw new Error("native failure"); }, privateChannelRecord: null, version: 1 }
+        });
+        expect(textContent(rendered)).toContain("archived message body");
+        expect(textContent(rendered).match(/保存的旧正文/g)).toHaveLength(1);
+        expect(nodes(rendered, "details")).toHaveLength(0);
+    });
+
+    it("shows history text while historical attachments wait for row visibility", () => {
+        mocks.effect.mockImplementation(effect => effect());
+        const source = record({
+            content: "",
+            editHistory: [{ content: "attachment's old body", timestamp: "2026-10-08T00:59:00Z", attachments: [{ id: "old", filename: "old.png", path: "old.png", content_type: 42 }] }]
+        });
+        const rendered = renderContent(source, { attachmentsPending: true });
+        expect(textContent(rendered)).toContain("attachment's old body");
+        expect(nodes(rendered, "img")).toHaveLength(0);
+        expect(nodes(rendered).some(node => node.props["aria-busy"] === "true")).toBe(true);
+        expect(mocks.acquire).not.toHaveBeenCalled();
+        expect(mocks.retain).not.toHaveBeenCalled();
+    });
+
+    it("keeps valid history visible around malformed optional fields", () => {
+        const source = record({
+            editHistory: [null, 4, { content: 12 }, { content: "saved history", timestamp: "2026-10-08T00:59:00Z", attachments: [null, { id: "a1", filename: "old.png", content_type: 42 }] }]
+        });
+        const rendered = renderContent(source);
+        expect(textContent(rendered)).toContain("saved history");
+        expect(textContent(rendered)).toContain("old.png");
+        expect(mocks.parse).toHaveBeenCalledWith("", true, expect.any(Object));
+    });
+
+    it("parses each saved version with the native message context and inline edited marker", () => {
+        const source = record({ editHistory: [{ content: "**旧正文**\nhttps://example.test 😀", timestamp: "2026-10-08T00:59:00Z" }] });
+        const rendered = renderContent(source);
+        expect(mocks.parse).toHaveBeenCalledWith(source.editHistory![0].content, true, expect.objectContaining({ channelId: "c1", messageId: "m1", viewingChannelId: "selected-channel", allowLinks: true, allowHeading: true, allowList: true, allowEmojiLinks: true }));
+        expect(nodes(rendered, "parsed-edit")).toHaveLength(1);
+        expect(nodes(rendered, "time")).toHaveLength(1);
+        expect(textContent(rendered)).toContain("modal.tab.edited");
+        expect(textContent(rendered)).not.toContain("2026-10-08T00:59");
+    });
+
+    it("falls back only the failed version to plain text while other versions keep native parsing", () => {
+        mocks.parse.mockImplementation(content => {
+            if (content === "broken version") throw new Error("parser unavailable");
+            return { type: "parsed-edit", props: { children: content } };
+        });
+        const rendered = renderContent(record({ editHistory: [{ content: "broken version" }, { content: "working version" }] }));
+        expect(textContent(rendered)).toContain("broken version");
+        expect(textContent(rendered)).toContain("working version");
+        expect(nodes(rendered, "parsed-edit")).toHaveLength(1);
+        expect(nodes(rendered, "details")).toHaveLength(0);
+    });
+
+    it("treats a non-string historical attachment URL as missing", () => {
+        mocks.effect.mockImplementation(effect => effect());
+        mocks.retain.mockImplementation(url => {
+            expect(typeof url).toBe("string");
+            return null;
+        });
+        const source = record({ editHistory: [{ content: "saved text", attachments: [{ id: "old", filename: "old.png", url: 42 }] }] });
+        expect(textContent(renderContent(source))).toContain("saved text");
+        expect(mocks.retain).toHaveBeenCalledWith("");
+    });
+
+    it("uses the historical attachment ID when a pending filename is malformed", () => {
+        const source = record({ editHistory: [{ content: "saved text", attachments: [{ id: "old", filename: { invalid: true } }] }] });
+        const rendered = renderContent(source, { attachmentsPending: true });
+        expect(nodes(rendered, "span").some(node => node.props.children?.[0] === "old")).toBe(true);
+        expect(textContent(rendered)).toContain("saved text");
     });
 
     it("makes truly empty content explicit and tolerates malformed optional collections", () => {

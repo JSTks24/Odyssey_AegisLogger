@@ -70,14 +70,16 @@ function LogsModal({ modalProps, initalQuery }: Props) {
     const contentRef = useRef<HTMLDivElement | null>(null);
 
     const { messages, total, hasMore, pending, phase, error, reset, retry } = hooks.useMessages(submittedQuery, currentTab, sortNewest, numDisplayedMessages);
+    const searching = pending && phase === "searching" && error == null;
     const active = modalProps.transitionState === 1;
     const initialPageSize = settings.store.messagesToDisplayAtOnceInLogs;
     const submitQuery = React.useCallback((value: string) => {
         setDraftQuery(value);
         setSubmittedQuery(value);
         setNumDisplayedMessages(initialPageSize);
+        reset();
         contentRef.current?.firstElementChild?.scrollTo(0, 0);
-    }, [initialPageSize]);
+    }, [initialPageSize, reset]);
     const addQueryToken = React.useCallback((token: string) => {
         submitQuery((submittedQuery + " " + token).trim());
     }, [submittedQuery, submitQuery]);
@@ -140,57 +142,59 @@ function LogsModal({ modalProps, initalQuery }: Props) {
                     <ModalContent
                         className={cl("content")}
                     >
-                        {error != null && (
-                            <LogsErrorState retry={retry} />
-                        )}
+                        <div className={cl("content-results")} inert={searching} aria-hidden={searching || undefined} aria-busy={searching}>
+                            {error != null && (
+                                <LogsErrorState retry={retry} />
+                            )}
 
-                        {error == null && total === 0 && (
-                            <EmptyLogs
-                                hasQuery={submittedQuery.length !== 0}
-                                reset={reset}
-                            />
-                        )}
+                            {error == null && !pending && total === 0 && (
+                                <EmptyLogs
+                                    hasQuery={submittedQuery.length !== 0}
+                                    reset={reset}
+                                />
+                            )}
 
-                        {error == null && total !== 0 && pending && phase === "initial" && messages.length === 0 && (
-                            <div className={cl("loading-state")}>
-                                <div className={cl("load-dots")}>
-                                    <span className={cl("load-dot")} />
-                                    <span className={cl("load-dot")} />
-                                    <span className={cl("load-dot")} />
+                            {error == null && pending && phase === "initial" && messages.length === 0 && (
+                                <div className={cl("loading-state")}>
+                                    <div className={cl("load-dots")}>
+                                        <span className={cl("load-dot")} />
+                                        <span className={cl("load-dot")} />
+                                        <span className={cl("load-dot")} />
+                                    </div>
+                                    <span>{t("modal.loading.initial")}</span>
                                 </div>
-                                <span>{t("modal.loading.initial")}</span>
-                            </div>
-                        )}
+                            )}
 
-                        {error == null && phase === "searching" && (
-                            <div className={cl("search-status")}>
-                                {t("modal.loading.searching")}
-                            </div>
-                        )}
-
-                        {error == null && total !== 0 && (messages.length > 0 || !pending) && (
-                            <LogsContentMemo
-                                visibleMessages={messages}
-                                canLoadMore={hasMore}
-                                active={active}
-                                pending={pending}
-                                phase={phase}
-                                tab={currentTab}
-                                sortNewest={sortNewest}
-                                reset={reset}
-                                addQueryToken={addQueryToken}
-                                handleLoadMore={handleLoadMore}
-                            />
-                        )}
+                            {error == null && total !== 0 && (messages.length > 0 || !pending) && (
+                                <LogsContentMemo
+                                    visibleMessages={messages}
+                                    canLoadMore={hasMore}
+                                    active={active}
+                                    pending={pending}
+                                    phase={phase}
+                                    tab={currentTab}
+                                    sortNewest={sortNewest}
+                                    reset={reset}
+                                    addQueryToken={addQueryToken}
+                                    handleLoadMore={handleLoadMore}
+                                />
+                            )}
+                        </div>
                     </ModalContent>
                 }
+                {searching && (
+                    <div className={cl("search-overlay")} role="status" aria-live="polite" aria-atomic="true">
+                        <span className={cl("search-spinner")} aria-hidden="true" />
+                        <span>{t("modal.loading.searching")}</span>
+                    </div>
+                )}
             </div>
             <ModalFooter className={cl("footer")}>
                 <ClearLogsButton label={t("modal.clearAll")} onCleared={reset} />
                 <Button
                     style={{ marginRight: "16px" }}
                     variant="dangerSecondary"
-                    disabled={messages?.length === 0}
+                    disabled={searching || messages?.length === 0}
                     onClick={() => Alerts.show({
                         title: t("modal.clearLogs.title"),
                         body: t("modal.clearLogs.body", { count: messages.length }),
