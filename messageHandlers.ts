@@ -57,6 +57,7 @@ export async function messageDeleteHandler(payload: MessageDeletePayload) {
 
     try {
         const native = oldGetMessage?.(payload.channelId, payload.id);
+        const snapshot = cacheSentMessages.get(`${payload.channelId},${payload.id}`);
         const wrote = await enqueueMessageTask(payload.id, async () => {
             if (!loggingScope.records()) return false;
             const current = native == null ? null : oldGetMessage?.(payload.channelId, payload.id) ?? native;
@@ -64,7 +65,7 @@ export async function messageDeleteHandler(payload: MessageDeletePayload) {
             const cached = cacheSentMessages.get(`${payload.channelId},${payload.id}`);
             const archived = nativeMessage == null && cached == null ? await idb.getMessageIDB(payload.id) : null;
             if (!loggingScope.records()) return false;
-            const source = nativeMessage ?? cached ?? archived?.message;
+            const source = nativeMessage ?? cached ?? archived?.message ?? snapshot;
             if (source == null || source.channel_id !== payload.channelId) return false;
             const message = mergeMessage(cached ?? archived?.message, source);
             message.guildId = payload.guildId || (payload as any).guild_id || message.guildId;
@@ -75,8 +76,6 @@ export async function messageDeleteHandler(payload: MessageDeletePayload) {
                 FluxDispatcher.dispatch({ type: "MESSAGE_DELETE", channelId: payload.channelId, id: payload.id, mlDeleted: true });
                 return false;
             }
-            if (nativeMessage != null && !nativeMessage.deleted) return false;
-
             const wrote = await writeMessageRecord(message, isGhostPinged(message) ? DBMessageStatus.GHOST_PINGED : DBMessageStatus.DELETED);
             if (wrote) cacheSentMessages.delete(`${payload.channelId},${payload.id}`);
             return wrote;
@@ -88,7 +87,7 @@ export async function messageDeleteHandler(payload: MessageDeletePayload) {
 }
 
 export async function messageDeleteBulkHandler({ channelId, guildId, ids }: MessageDeleteBulkPayload) {
-    for (const id of ids) await messageDeleteHandler({ type: "MESSAGE_DELETE", channelId, guildId, id });
+    await Promise.all(ids.map(id => messageDeleteHandler({ type: "MESSAGE_DELETE", channelId, guildId, id })));
 }
 
 export async function messageUpdateHandler(payload: MessageUpdatePayload) {

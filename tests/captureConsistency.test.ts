@@ -35,7 +35,7 @@ import { ChannelStore, FluxDispatcher, MessageStore, UserStore } from "@webpack/
 
 import idb, { DBMessageStatus } from "../db";
 import { settings } from "../index";
-import { addMessage, flushWrites } from "../LoggedMessageManager";
+import { addMessage, enqueueMessageTask, flushWrites } from "../LoggedMessageManager";
 import handlers from "../messageHandlers";
 import contextMenu from "../utils/contextMenu";
 import loggingScope from "../utils/loggingScope";
@@ -56,6 +56,7 @@ beforeEach(() => {
     state.records.clear();
     state.native.clear();
     handlers.cacheSentMessages.clear();
+    handlers.setCacheLimit(1000);
     handlers.setGetMessage((_channel, id) => state.native.get(id));
     MessageStore.getMessage = (_channel: string, id: string) => state.native.get(id);
     Object.assign(settings.store, {
@@ -69,6 +70,144 @@ beforeEach(() => {
 });
 
 describe("capture consistency", () => {
+    it("records an unopened thread using the server identity on the event", async () => {
+        ChannelStore.getChannel = () => undefined;
+        settings.store.whitelistedIds = "guild";
+        handlers.messageCreateHandler({ guildId: "guild", message: message("1", {
+            guild_id: undefined, attachments: [{ id: "image", filename: "image.png", url: "https://example.test/image.png" }]
+        }) } as any);
+        expect(state.records.size).toBe(0);
+        await handlers.messageDeleteHandler({ channelId: "channel", id: "1" } as any);
+        expect(state.records.get("1")).toMatchObject({ status: DBMessageStatus.DELETED, message: {
+            guildId: "guild", attachments: [{ id: "image", filename: "image.png" }]
+        } });
+    });
+
+    it("retains a deletion snapshot evicted while its message queue is blocked", async () => {
+        handlers.setCacheLimit(2);
+        settings.store.saveImages = true;
+        handlers.messageCreateHandler({ message: message("1", { attachments: [{ id: "image", filename: "image.png" }] }) } as any);
+        let release = () => {};
+        const gate = new Promise<void>(resolve => { release = resolve; });
+        const blocked = enqueueMessageTask("1", () => gate);
+        const deleting = handlers.messageDeleteHandler({ channelId: "channel", id: "1" } as any);
+        for (const id of ["2", "3"]) handlers.messageCreateHandler({ message: message(id) } as any);
+        const evicted = !handlers.cacheSentMessages.has("channel,1");
+        release();
+        await Promise.all([blocked, deleting]);
+        await flushWrites();
+        expect(evicted).toBe(true);
+        expect(handlers.cacheSentMessages.size).toBe(2);
+        expect(state.records.get("1")).toMatchObject({ status: DBMessageStatus.DELETED, message: {
+            content: "old", attachments: [{ id: "image", filename: "image.png" }]
+        } });
+        expect(state.downloads).toHaveBeenCalledWith(expect.objectContaining({ attachments: [{ id: "image", filename: "image.png" }] }), undefined);
+    });
+
+    it("retains every bulk deletion before waiting for the first message", async () => {
+        handlers.setCacheLimit(2);
+        for (const id of ["1", "2"]) handlers.messageCreateHandler({ message: message(id, { attachments: [{ id: `image-${id}` }] }) } as any);
+        let release = () => {};
+        const gate = new Promise<void>(resolve => { release = resolve; });
+        const blocked = enqueueMessageTask("1", () => gate);
+        const deleting = handlers.messageDeleteBulkHandler({ channelId: "channel", ids: ["1", "2"] } as any);
+        for (const id of ["3", "4"]) handlers.messageCreateHandler({ message: message(id) } as any);
+        release();
+        await Promise.all([blocked, deleting]);
+        for (const id of ["1", "2"]) expect(state.records.get(id)).toMatchObject({
+            status: DBMessageStatus.DELETED, message: { attachments: [{ id: `image-${id}` }] }
+        });
+        expect(handlers.cacheSentMessages.size).toBe(2);
+    });
+
+    it("prefers the preceding edit persisted after the deletion snapshot was captured", async () => {
+        handlers.setCacheLimit(1);
+        handlers.messageCreateHandler({ message: message() } as any);
+        let release = () => {};
+        const gate = new Promise<void>(resolve => { release = resolve; });
+        vi.mocked(idb.getMessageIDB).mockImplementationOnce(async () => { await gate; return undefined; });
+        vi.mocked(idb.addMessageIDB).mockImplementationOnce(async (current, status) => {
+            state.records.set(current.id, { message: structuredClone(current), status });
+            handlers.messageCreateHandler({ message: message("2") } as any);
+        });
+        const editing = handlers.messageUpdateHandler(update({ content: "new", attachments: [{ id: "new" }] }));
+        await new Promise(resolve => setTimeout(resolve, 0));
+        const deleting = handlers.messageDeleteHandler({ channelId: "channel", id: "1" } as any);
+        release();
+        await Promise.all([editing, deleting]);
+        expect(state.records.get("1")).toMatchObject({ status: DBMessageStatus.DELETED, message: {
+            content: "new", attachments: [{ id: "new" }], editHistory: [{ content: "old" }]
+        } });
+    });
+
+    it.each([false, undefined])("records a deletion even before the native deleted flag is set (%s)", async deleted => {
+        state.native.set("1", message("1", { deleted }));
+        await handlers.messageDeleteHandler({ channelId: "channel", id: "1" } as any);
+        expect(state.records.get("1")).toMatchObject({ status: DBMessageStatus.DELETED, message: { deleted: true } });
+    });
+
+    it("does not archive live messages merely because their snapshots were evicted", async () => {
+        handlers.setCacheLimit(1);
+        for (const id of ["1", "2"]) handlers.messageCreateHandler({ message: message(id) } as any);
+        await flushWrites();
+        expect(state.records.size).toBe(0);
+        await handlers.messageUpdateHandler({ message: { id: "2", channel_id: "channel", content: "edited" } } as any);
+        expect(state.records.get("2")).toMatchObject({ status: DBMessageStatus.EDITED, message: { deleted: false } });
+    });
+
+    it.each(["local", "disabled", "ephemeral", "outside", "bot"])("does not record an excluded deletion (%s)", async reason => {
+        const current = message("1", { deleted: false, flags: reason === "ephemeral" ? 64 : 0 });
+        handlers.messageCreateHandler({ message: current } as any);
+        state.native.set("1", current);
+        if (reason === "disabled") settings.store.logDeletes = false;
+        if (reason === "outside") settings.store.whitelistedIds = "other-guild";
+        if (reason === "bot") settings.store.ignoreBots = true;
+        await handlers.messageDeleteHandler({ channelId: "channel", id: "1", mlDeleted: reason === "local" } as any);
+        expect(state.records.size).toBe(0);
+        expect(state.downloads).not.toHaveBeenCalled();
+    });
+
+    it("rechecks the current scope before using an evicted deletion snapshot", async () => {
+        handlers.setCacheLimit(1);
+        handlers.messageCreateHandler({ message: message() } as any);
+        let release = () => {};
+        const gate = new Promise<void>(resolve => { release = resolve; });
+        const blocked = enqueueMessageTask("1", () => gate);
+        const deleting = handlers.messageDeleteHandler({ channelId: "channel", id: "1" } as any);
+        handlers.messageCreateHandler({ message: message("2") } as any);
+        settings.store.whitelistedIds = "other-guild";
+        release();
+        await Promise.all([blocked, deleting]);
+        expect(state.records.size).toBe(0);
+    });
+
+    it("queues every bulk deletion before a later permanent removal", async () => {
+        for (const id of ["1", "2"]) handlers.messageCreateHandler({ message: message(id) } as any);
+        let release = () => {};
+        const gate = new Promise<void>(resolve => { release = resolve; });
+        const blocked = enqueueMessageTask("1", () => gate);
+        const deleting = handlers.messageDeleteBulkHandler({ channelId: "channel", ids: ["1", "2"] } as any);
+        const clearing = contextMenu.removeMessageAction({ message: message("2", { deleted: true }) });
+        release();
+        await Promise.all([blocked, deleting, clearing]);
+        const writes = vi.mocked(idb.addMessageIDB).mock;
+        const writeIndex = writes.calls.findIndex(([current]) => current.id === "2");
+        expect(writeIndex).toBeGreaterThanOrEqual(0);
+        expect(writes.invocationCallOrder[writeIndex]).toBeLessThan(vi.mocked(idb.deleteMessageIDB).mock.invocationCallOrder[0]);
+        expect(state.records.has("1")).toBe(true);
+        expect(state.records.has("2")).toBe(false);
+        expect(handlers.cacheSentMessages.has("channel,2")).toBe(false);
+    });
+
+    it("deduplicates overlapping single and bulk deletions", async () => {
+        handlers.messageCreateHandler({ message: message() } as any);
+        await Promise.all([
+            handlers.messageDeleteHandler({ channelId: "channel", id: "1" } as any),
+            handlers.messageDeleteBulkHandler({ channelId: "channel", ids: ["1", "1"] } as any)
+        ]);
+        expect(idb.addMessageIDB).toHaveBeenCalledTimes(1);
+    });
+
     it.each([undefined, false])("records a card edit using the cached user identity when author.bot=%s", async bot => {
         UserStore.getUser = () => ({ id: "bot", bot: true });
         handlers.messageCreateHandler({ message: message("1", { author: { id: "bot", bot }, embeds: [{ title: "first" }] }) } as any);
