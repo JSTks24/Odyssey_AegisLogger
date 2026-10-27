@@ -193,7 +193,7 @@ describe("addMessage", () => {
         expect(filter).toBeUndefined();
     });
 
-    it("never caches images for ghost pings", async () => {
+    it("caches images for deleted ghost pings", async () => {
         settings.store.saveImages = true;
         vi.mocked(idb.getMessageIDB).mockResolvedValue(makeRecord({
             status: DBMessageStatus.GHOST_PINGED,
@@ -203,7 +203,7 @@ describe("addMessage", () => {
         await addMessage(makeMessage({ attachments: [{ id: "a1" }] }), DBMessageStatus.GHOST_PINGED);
         await flushWrites();
 
-        expect(cacheMessageImages).not.toHaveBeenCalled();
+        expect(cacheMessageImages).toHaveBeenCalledOnce();
     });
 
     it("applies downloaded attachment metadata through a version guarded update", async () => {

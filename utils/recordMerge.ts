@@ -6,6 +6,7 @@
 
 import { type DBMessageRecord, DBMessageStatus } from "../db";
 import { LoggedAttachment, LoggedEdit, LoggedMessageJSON } from "../types";
+import messageEmbeds from "./messageEmbeds";
 
 const editTime = (edit: LoggedEdit): number => {
     const value = (edit as any)?.timestamp;
@@ -22,14 +23,22 @@ export function mergeEditHistory(existing: LoggedEdit[] | undefined | null, inco
     for (const edit of [...(existing ?? []), ...(incoming ?? [])]) {
         if (edit == null || typeof edit !== "object") continue;
 
-        const key = editKey(edit);
-        const current = merged.get(key);
-        if (current == null || (current.attachments == null && edit.attachments != null)) {
-            merged.set(key, edit);
-        }
+        const prefix = editKey(edit);
+        const key = `${prefix}|${edit.embeds == null ? "" : messageEmbeds.key(edit.embeds)}`;
+        const incompleteKey = `${prefix}|`;
+        const incomplete = merged.get(incompleteKey);
+        const matching = edit.embeds == null ? [...merged].find(([, value]) => editKey(value) === prefix)?.[0] : undefined;
+        const targetKey = matching ?? key;
+        const current = merged.get(targetKey) ?? incomplete;
+        if (edit.embeds != null) merged.delete(incompleteKey);
+        merged.set(targetKey, current == null ? edit : {
+            ...current, ...edit,
+            ...(edit.embeds == null && current.embeds != null ? { embeds: current.embeds } : {}),
+            ...(edit.attachments == null && current.attachments != null ? { attachments: current.attachments } : {})
+        });
     }
 
-    return [...merged.values()].sort((a, b) => editTime(a) - editTime(b) || (editKey(a) < editKey(b) ? -1 : 1));
+    return [...merged.values()].sort((a, b) => editTime(a) - editTime(b) || (editKey(a) === editKey(b) ? 0 : editKey(a) < editKey(b) ? -1 : 1));
 }
 
 export function adoptAttachmentMetadata(target: LoggedAttachment[] | undefined | null, sources: LoggedAttachment[] | undefined | null): void {

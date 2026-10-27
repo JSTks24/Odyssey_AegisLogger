@@ -44,6 +44,7 @@ export interface LoggedEdit {
     timestamp: string;
     content: string;
     attachments?: LoggedAttachment[];
+    embeds?: LoggedMessageJSON["embeds"];
 }
 
 export interface LoggedMessage extends Message {

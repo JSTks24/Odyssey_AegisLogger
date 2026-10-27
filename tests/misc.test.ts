@@ -34,6 +34,7 @@ import {
     hasPingged,
     isGhostPinged,
     isImageAttachment,
+    mapTimestamp,
     parseJSON,
     sortMessagesByDate,
     splitRemovedAttachments
@@ -50,6 +51,13 @@ describe("web update bridge", () => {
         const native = getNative();
         expect(await native.getUpdateStatus()).toMatchObject({ ok: false, message: "desktop_only" });
         expect(await native.update()).toMatchObject({ ok: false, message: "desktop_only" });
+    });
+});
+
+describe("card edit timestamps", () => {
+    it("preserves raw historical cards until rendering with a real message identity", () => {
+        const edit = { content: "", timestamp: "2026-10-26T00:00:00.000Z", embeds: [{ type: "rich", title: "saved card" }] };
+        expect(mapTimestamp(edit)).toEqual({ ...edit, timestamp: new Date("2026-10-26T00:00:00.000Z"), embeds: [{ type: "rich", title: "saved card" }] });
     });
 });
 

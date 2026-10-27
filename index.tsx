@@ -8,6 +8,7 @@ export const Native = getNative();
 
 import "./styles.css";
 
+import { updateMessage } from "@api/MessageUpdater";
 import { plugins } from "@api/PluginManager";
 import ErrorBoundary from "@components/ErrorBoundary";
 import MessageLogger from "@plugins/messageLogger";
@@ -15,22 +16,24 @@ import { Logger } from "@utils/Logger";
 import definePlugin from "@utils/types";
 import { Alerts, MessageStore, React } from "@webpack/common";
 
+import chatHistory from "./components/ChatHistory";
 import { OpenLogsButton } from "./components/LogsButton";
 import logsModal from "./components/LogsModal";
 import idb from "./db";
 import * as LoggedMessageManager from "./LoggedMessageManager";
 import messageHandlers from "./messageHandlers";
 import { settings } from "./settings";
-import { LoadMessagePayload, LoggedMessageJSON } from "./types";
+import { LoadMessagePayload, LoggedMessage, LoggedMessageJSON } from "./types";
 import { getNative, mapTimestamp, reAddDeletedMessages, shouldIgnoreMessage } from "./utils";
 import chatBridge from "./utils/chatBridge";
-import { removeContextMenuBindings, setupContextMenuPatches } from "./utils/contextMenu";
+import contextMenu, { removeContextMenuBindings, setupContextMenuPatches } from "./utils/contextMenu";
 import { removedAttachmentLabelCss, t } from "./utils/i18n";
 import loggingScope from "./utils/loggingScope";
 import messageLoggerScope from "./utils/messageLoggerScope";
 import messageLoggerSettings from "./utils/messageLoggerSettings";
 import { doesMatch } from "./utils/parseQuery";
 import pluginRuntime from "./utils/pluginRuntime";
+import { mergeEditHistory } from "./utils/recordMerge";
 import * as imageUtils from "./utils/saveImage";
 import * as ImageManager from "./utils/saveImage/ImageManager";
 import updater from "./utils/updater";
@@ -39,6 +42,7 @@ export { settings };
 export const logger = new Logger("AegisLogger", "#f26c6c");
 
 let originalGetMessage: typeof MessageStore.getMessage | null = null;
+let integrationReady = false;
 
 function holdChatAttachment(instance: any) {
     chatBridge.holdAttachment(instance);
@@ -224,7 +228,7 @@ export default definePlugin({
         if (shouldIgnoreMessage(m2, m1, true)) return [];
         const editHistory = m2?.editHistory ?? m1?.editHistory?.map(mapTimestamp);
         if (settings.store.logDeletedAttachments === false && Array.isArray(editHistory))
-            return editHistory.map(edit => ({ content: edit.content, timestamp: edit.timestamp }));
+            return editHistory.map(({ attachments, ...edit }) => edit);
         return editHistory;
     },
 
@@ -236,20 +240,26 @@ export default definePlugin({
     },
 
     async start() {
-        if (!messageLoggerSettings.ready()) {
+        if (!messageLoggerSettings.ready() || !integrationReady) {
             Alerts.show({ title: "AegisLogger", body: t("settings.messageLoggerAdapterFailed") });
             return;
         }
         messageLoggerSettings.prepare();
         pluginRuntime.start();
-        messageLoggerScope.start(plugins.MessageLogger as any);
+        messageLoggerScope.start(plugins.MessageLogger as any, messageHandlers.rememberMessage);
 
         applyRemovedLabelStyle();
 
         messageHandlers.setCacheLimit(settings.store.cacheLimit);
 
         originalGetMessage = chatBridge.start();
-        messageHandlers.setGetMessage(originalGetMessage);
+        messageHandlers.setGetMessage(originalGetMessage, message => {
+            if (!pluginRuntime.isRunning()) return;
+            const current = originalGetMessage?.(message.channel_id, message.id) as LoggedMessage | undefined;
+            if (!current || current.deleted) return;
+            const editHistory = mergeEditHistory(current.editHistory, message.editHistory).map(edit => mapTimestamp({ ...edit }));
+            updateMessage(message.channel_id, message.id, { editHistory });
+        });
 
         imageUtils.registerBlobUrlReleaser(url => URL.revokeObjectURL(url));
 
@@ -274,6 +284,7 @@ export default definePlugin({
 
         chatBridge.stop();
         originalGetMessage = null;
+        messageHandlers.setGetMessage(null);
 
         removeRemovedLabelStyle();
         imageUtils.clearAttachmentBlobCache();
@@ -281,3 +292,9 @@ export default definePlugin({
 });
 
 messageLoggerSettings.install(MessageLogger as any);
+integrationReady = messageLoggerScope.install(MessageLogger, {
+    active: pluginRuntime.isRunning,
+    clearHistory: message => contextMenu.removeMessageAction({ message }),
+    renderEdits: (props, original) => <chatHistory.InlineHistory {...props} original={original} />,
+    editMarker: (props, original) => <chatHistory.EditMarker {...props} original={original} />
+});

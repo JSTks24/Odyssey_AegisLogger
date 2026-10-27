@@ -635,6 +635,28 @@ describe("whitelist replay boundaries", () => {
 });
 
 describe("ignored bot replay boundaries", () => {
+    it.each([false, true])("makes webhook replay obey ignoreBots=%s while preserving archived cards", async ignoreBots => {
+        const archived = makeMessage("979", {
+            author: { id: "hook", bot: false }, webhook_id: "hook",
+            embeds: [{ type: "rich", title: "current card" }],
+            editHistory: [{ content: "", timestamp: "2026-01-01T00:00:00.000Z", embeds: [{ type: "rich", title: "old card" }] }]
+        });
+        await idb.addMessageIDB(archived, DBMessageStatus.DELETED);
+        settings.store.ignoreBots = ignoreBots;
+        pluginRuntime.start();
+        chatBridge.start();
+        const response = makeResponse(["979"]);
+        response.body[0].author = { id: "hook", bot: false };
+        await chatBridge.processMessageFetch(response);
+        if (ignoreBots) {
+            expect(response.body.extra).toBeUndefined();
+            expect(readMessage("979")).toBeNull();
+        } else {
+            expect(response.body.extra[0]).toMatchObject({ embeds: [{ title: "current card" }], editHistory: [{ embeds: [{ title: "old card" }] }] });
+        }
+        expect((await idb.getMessageIDB("979"))?.message).toEqual(archived);
+    });
+
     it.each([DBMessageStatus.DELETED, DBMessageStatus.EDITED, DBMessageStatus.GHOST_PINGED])("preserves archived bots without replaying %s", async status => {
         const archived = makeMessage("980", {
             author: { id: "bot", bot: true }, attachments: [makeAttachment("bot-image")],

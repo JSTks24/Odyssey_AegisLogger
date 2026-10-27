@@ -41,7 +41,7 @@ export function enqueueMessageTask<T>(messageId: string, task: () => Promise<T>)
 }
 
 const cacheFilterForStatus = (status: DBMessageStatus): ((attachment: LoggedAttachment) => boolean) | undefined | null => {
-    if (status === DBMessageStatus.DELETED) return undefined;
+    if (status === DBMessageStatus.DELETED || status === DBMessageStatus.GHOST_PINGED) return undefined;
     if (status === DBMessageStatus.EDITED) return attachment => attachment.deleted === true;
     return null;
 };

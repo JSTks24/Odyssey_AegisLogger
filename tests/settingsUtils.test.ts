@@ -177,6 +177,15 @@ describe("importLogs", () => {
         expect(record.status).toBe(DBMessageStatus.DELETED);
     });
 
+    it("imports legacy text history alongside optional card snapshots", async () => {
+        const old = { ...makeMessage("1"), editHistory: [{ content: "old text", timestamp: "2026-01-01T00:00:00.000Z" }] };
+        const cards = { ...makeMessage("2"), editHistory: [{ content: "", timestamp: "2026-01-01T00:00:00.000Z", embeds: [{ type: "rich", title: "old card" }] }] };
+        vi.mocked(chooseFile).mockResolvedValue(makeStreamFile([JSON.stringify({ messages: [old, cards] })]) as any);
+        const summary = await importLogs();
+        expect(summary!.imported).toBe(2);
+        expect(importedRecords().flat().map(record => record.message.editHistory)).toEqual([old.editHistory, cards.editHistory]);
+    });
+
     it("keeps the stored status of a record instead of recomputing it", async () => {
         vi.mocked(chooseFile).mockResolvedValue(makeStreamFile([JSON.stringify({
             messages: [{ status: DBMessageStatus.GHOST_PINGED, message: makeMessage("1") }]

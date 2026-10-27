@@ -197,7 +197,9 @@ describe("messageLimit through the edit entry", () => {
 
         for (let i = 0; i < ids.length; i++) await editMessage(ids[i], i);
 
-        expect(cacheSentMessages.size).toBe(0);
+        expect(cacheSentMessages.size).toBe(2);
+        expect(cacheSentMessages.has(`100,${ids[0]}`)).toBe(false);
+        expect(ids.slice(-2).every(id => cacheSentMessages.has(`100,${id}`))).toBe(true);
         expect(await idb.countMessagesIDB()).toBe(5);
         expect(await rawKeys()).toHaveLength(5);
         expect(indexedIds()).toHaveLength(5);

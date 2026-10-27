@@ -18,7 +18,8 @@ vi.mock("../utils", () => ({
     getIdList: vi.fn(() => []),
     hasPingged: vi.fn(() => false),
     isGhostPinged: vi.fn(() => false),
-    shouldIgnore: vi.fn(() => false)
+    shouldIgnore: vi.fn(() => false),
+    shouldIgnoreMessage: vi.fn(() => false)
 }));
 
 vi.mock("../utils/saveImage", () => ({

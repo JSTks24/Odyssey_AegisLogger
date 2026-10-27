@@ -81,6 +81,7 @@ interface ShouldIgnoreArguments {
     guildId?: string;
     flags?: number,
     bot?: boolean;
+    webhookId?: string;
     ghostPinged?: boolean;
     content?: string;
 }
@@ -96,14 +97,14 @@ const UserGuildSettingsStore = findStoreLazy("UserGuildSettingsStore");
   * @param {ShouldIgnoreArguments} args - An object containing the message details.
   * @returns {boolean} - True if the message should be ignored, false if it should be kept.
 */
-export function shouldIgnore({ channelId, authorId, guildId, flags, bot, ghostPinged, content }: ShouldIgnoreArguments): boolean {
+export function shouldIgnore({ channelId, authorId, guildId, flags, bot, webhookId, ghostPinged, content }: ShouldIgnoreArguments): boolean {
     const isEphemeral = ((flags ?? 0) & EPHEMERAL) === EPHEMERAL;
     if (isEphemeral) return true;
 
     if (channelId && !guildId)
         guildId = getGuildIdByChannel(channelId);
 
-    if (!loggingScope.allows({ channelId, authorId, guildId, bot })) return true;
+    if (!loggingScope.allows({ channelId, authorId, guildId, bot, webhookId })) return true;
 
     if (!ghostPinged && contentExcluded(content, guildId, channelId, authorId))
         return true;

@@ -95,7 +95,7 @@ function MessageContent(props: contentProps) {
             >
                 <NativePreview {...props} />
             </MessageBoundary>
-            <MessageHistory record={props.record} attachmentsPending={props.attachmentsPending} version={props.modules.version} />
+            <MessageHistory record={props.record} attachmentsPending={props.attachmentsPending} version={props.modules.version} channel={props.channel} />
         </>
     );
 }
@@ -208,7 +208,9 @@ function EditContent({ record, edit }: { record: LoggedMessageJSON; edit: Logged
     return <>{parsed}{isNaN(timestamp.getTime()) ? marker : <Timestamp timestamp={timestamp} isEdited={true} isInline={false}>{marker}</Timestamp>}</>;
 }
 
-function MessageHistory({ record, attachmentsPending = false, version = 0 }: { record: LoggedMessageJSON; attachmentsPending?: boolean; version?: number }) {
+function MessageHistory({ record, attachmentsPending = false, version = 0, channel }: { record: LoggedMessageJSON; attachmentsPending?: boolean; version?: number; channel?: Channel | null }) {
+    const [modules, setModules] = useState(logMessageModules.getSnapshot);
+    useEffect(() => logMessageModules.subscribe(() => setModules(logMessageModules.getSnapshot())), []);
     const history = Array.isArray(record.editHistory) ? record.editHistory.filter(edit => edit != null && typeof edit === "object") : [];
     if (history.length === 0) return null;
     const allAttachments = Array.isArray(record.attachments) ? record.attachments.filter(Boolean) : [];
@@ -217,12 +219,25 @@ function MessageHistory({ record, attachmentsPending = false, version = 0 }: { r
         <div className="aegis-modal-edit-history">
             {history.map((edit, index) => <div className="aegis-modal-edit-version" key={index}>
                 <MessageBoundary
-                    key={version}
+                    key={`text-${version}`}
                     record={record}
                     fallback={<>{typeof edit.content === "string" ? edit.content : ""}<span className="aegis-modal-edit-marker"> ({t("modal.tab.edited")})</span></>}
                 >
                     <EditContent record={record} edit={edit} />
                 </MessageBoundary>
+                {edit.embeds != null && edit.embeds.length > 0 && <MessageBoundary
+                    key={`embeds-${modules.version}`}
+                    record={record}
+                    fallback={<SnapshotBody content="" attachments={[]} embeds={edit.embeds} showEmpty={false} />}
+                >
+                    <NativePreview
+                        record={{ ...record, content: "", attachments: [], embeds: edit.embeds, editHistory: [], deleted: false }}
+                        message={prepareMessage({ ...record, content: "", attachments: [], embeds: edit.embeds, editHistory: [], deleted: false }).message}
+                        modules={modules}
+                        channel={channel}
+                        isGroupStart={false}
+                    />
+                </MessageBoundary>}
                 <SnapshotBody
                     content=""
                     attachments={Array.isArray(edit.attachments) ? edit.attachments.filter(Boolean).map(attachment => ({
@@ -240,6 +255,7 @@ function MessageHistory({ record, attachmentsPending = false, version = 0 }: { r
 const logMessageContent = {
     MessageContent,
     MessageSnapshot,
+    MessageHistory,
     prepareMessage
 };
 

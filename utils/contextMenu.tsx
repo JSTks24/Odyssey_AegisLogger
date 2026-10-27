@@ -7,11 +7,14 @@
 import { addContextMenuPatch, NavContextMenuPatchCallback, removeContextMenuPatch } from "@api/ContextMenu";
 import { updateMessage } from "@api/MessageUpdater";
 import { findStoreLazy } from "@webpack";
-import { FluxDispatcher, Menu, MessageActions, React, showToast, UserStore } from "@webpack/common";
+import { FluxDispatcher, Menu, MessageActions, MessageStore, React, showToast, UserStore } from "@webpack/common";
 
 import logsModal from "../components/LogsModal";
 import idb from "../db";
 import { settings } from "../index";
+import { enqueueMessageTask } from "../LoggedMessageManager";
+import messageHandlers from "../messageHandlers";
+import type { LoggedMessage, LoggedMessageJSON } from "../types";
 import { addToXAndRemoveFromOpposite, getListMenuState, ListType, removeFromX } from ".";
 import { t } from "./i18n";
 
@@ -69,17 +72,26 @@ function renderOpenLogs(idType: idKeys, props: any) {
 
 const removeMessageAction = async (props: any) => {
     try {
-        await idb.deleteMessageIDB(props.message.id);
-        if (props.message.deleted) {
-            FluxDispatcher.dispatch({
-                type: "MESSAGE_DELETE",
-                channelId: props.message.channel_id,
-                id: props.message.id,
-                mlDeleted: true
-            });
-        } else {
-            updateMessage(props.message.channel_id, props.message.id, { editHistory: [] });
-        }
+        await enqueueMessageTask(props.message.id, async () => {
+            const key = `${props.message.channel_id},${props.message.id}`;
+            const current = MessageStore.getMessage(props.message.channel_id, props.message.id) as LoggedMessage | undefined;
+            const message: LoggedMessage | LoggedMessageJSON = messageHandlers.cacheSentMessages.get(key)
+                ?? current ?? props.message;
+            await idb.deleteMessageIDB(props.message.id);
+            messageHandlers.cacheSentMessages.delete(key);
+            if (message.deleted || current?.deleted || props.message.deleted) {
+                FluxDispatcher.dispatch({
+                    type: "MESSAGE_DELETE",
+                    channelId: message.channel_id,
+                    id: message.id,
+                    mlDeleted: true
+                });
+            } else {
+                const attachments = message.attachments?.filter(attachment => !attachment.deleted);
+                updateMessage(message.channel_id, message.id, { editHistory: [], attachments });
+                messageHandlers.rememberMessage({ ...message, editHistory: [], attachments });
+            }
+        });
     } catch (e) {
         console.error("Failed to remove message", e);
         showToast(t("menu.removeFailed"), "failure");
@@ -90,13 +102,6 @@ export const contextMenuPath: NavContextMenuPatchCallback = (children, props) =>
     if (!props) return;
 
     if (!children.some(child => child?.props?.id === "aegis-logger")) {
-        if (settings.store.permanentlyRemoveLogByDefault) {
-            const mlRemoveHistory = children.find(c => c?.props?.id === "ml-remove-history");
-            if (mlRemoveHistory) {
-                mlRemoveHistory.props.action = () => removeMessageAction(props);
-            }
-        }
-
         children.push(
             <Menu.MenuSeparator />,
             <Menu.MenuItem
@@ -184,3 +189,7 @@ export const removeContextMenuBindings = () => {
     removeContextMenuPatch("guild-context", contextMenuPath);
     removeContextMenuPatch("gdm-context", contextMenuPath);
 };
+
+const contextMenu = { removeMessageAction };
+
+export default contextMenu;

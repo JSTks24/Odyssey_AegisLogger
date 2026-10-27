@@ -14,6 +14,7 @@ interface logScopeContext {
     authorId?: string;
     guildId?: string | null;
     bot?: boolean;
+    webhookId?: string;
 }
 
 function guildId(context: logScopeContext): string | undefined {
@@ -24,18 +25,19 @@ function context(message: any, fallback?: any): logScopeContext {
     const sameMessage = message?.id == null || message.id === fallback?.id;
     const authorId = message?.author?.id ?? (sameMessage ? fallback?.author?.id : undefined);
     const sameAuthor = authorId != null && authorId === fallback?.author?.id;
-    const fallbackBot = sameAuthor || (sameMessage && message?.author?.id == null) ? fallback?.author?.bot ?? fallback?.bot : undefined;
+    const fallbackBot = sameAuthor || (sameMessage && message?.author?.id == null) ? fallback?.author?.bot === true || fallback?.bot === true : false;
 
     return {
         channelId: message?.channel_id ?? message?.channelId ?? fallback?.channel_id ?? fallback?.channelId,
         authorId,
         guildId: message?.guild_id || message?.guildId || fallback?.guild_id || fallback?.guildId,
-        bot: message?.author?.bot ?? message?.bot ?? fallbackBot
+        bot: message?.author?.bot === true || message?.bot === true || fallbackBot || authorId != null && UserStore.getUser(authorId)?.bot === true,
+        webhookId: message?.webhook_id || message?.webhookId || (sameMessage ? fallback?.webhook_id || fallback?.webhookId : undefined)
     };
 }
 
 function allows(value: logScopeContext): boolean {
-    if (settings.store.ignoreBots && (value.bot ?? (value.authorId ? UserStore.getUser(value.authorId)?.bot : false))) return false;
+    if (settings.store.ignoreBots && (value.bot || value.webhookId || (value.authorId && UserStore.getUser(value.authorId)?.bot))) return false;
 
     const whitelist = ((settings.store.whitelistedIds as string) ?? "").split(",").map(id => id.trim()).filter(Boolean);
     if (whitelist.length === 0) return true;

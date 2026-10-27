@@ -20,6 +20,7 @@ import { User } from "@vencord/discord-types";
 import { MessageStore } from "@webpack/common";
 
 import { LoggedMessageJSON, RefrencedMessage } from "../types";
+import messageEmbeds from "./messageEmbeds";
 import { getGuildIdByChannel, isGhostPinged } from "./misc";
 
 export function cleanupMessage(message: any, removeDetails: boolean = true): LoggedMessageJSON {
@@ -38,6 +39,7 @@ export function cleanupMessage(message: any, removeDetails: boolean = true): Log
     ret.deleted = ret.deleted ?? false;
     ret.deletedTimestamp = ret.deleted ? (new Date()).toISOString() : undefined;
     ret.editHistory = ret.editHistory ?? [];
+    ret.editHistory = ret.editHistory.map(edit => edit.embeds == null ? edit : { ...edit, embeds: edit.embeds.map(messageEmbeds.normalize) });
     if (ret.type === 19) {
         ret.message_reference = message.message_reference || message.messageReference;
         if (ret.message_reference) {
@@ -59,47 +61,7 @@ export function cleanUpCachedMessage(message: any) {
 }
 
 export function cleanupEmbed(embed) {
-    if (!embed.id) return embed;
-    const retEmbed: any = {};
-    if (typeof embed.rawTitle === "string") retEmbed.title = embed.rawTitle;
-    if (typeof embed.rawDescription === "string") retEmbed.description = embed.rawDescription;
-    if (typeof embed.referenceId !== "undefined") retEmbed.reference_id = embed.referenceId;
-    if (typeof embed.type !== "undefined") retEmbed.type = embed.type;
-    if (typeof embed.url !== "undefined") retEmbed.url = embed.url;
-    if (typeof embed.provider === "object") retEmbed.provider = { name: embed.provider.name, url: embed.provider.url };
-    if (typeof embed.footer === "object") retEmbed.footer = { text: embed.footer.text, icon_url: embed.footer.iconURL, proxy_icon_url: embed.footer.iconProxyURL };
-    if (typeof embed.author === "object") retEmbed.author = { name: embed.author.name, url: embed.author.url, icon_url: embed.author.iconURL, proxy_icon_url: embed.author.iconProxyURL };
-    if (typeof embed.timestamp === "object" && embed.timestamp._isAMomentObject) retEmbed.timestamp = embed.timestamp.milliseconds();
-    if (typeof embed.thumbnail === "object") {
-        if (typeof embed.thumbnail.proxyURL === "string" || (typeof embed.thumbnail.url === "string" && !embed.thumbnail.url.endsWith("?format=jpeg"))) {
-            retEmbed.thumbnail = {
-                url: embed.thumbnail.url,
-                proxy_url: typeof embed.thumbnail.proxyURL === "string" ? embed.thumbnail.proxyURL.split("?format")[0] : undefined,
-                width: embed.thumbnail.width,
-                height: embed.thumbnail.height
-            };
-        }
-    }
-    if (typeof embed.image === "object") {
-        retEmbed.image = {
-            url: embed.image.url,
-            proxy_url: embed.image.proxyURL,
-            width: embed.image.width,
-            height: embed.image.height
-        };
-    }
-    if (typeof embed.video === "object") {
-        retEmbed.video = {
-            url: embed.video.url,
-            proxy_url: embed.video.proxyURL,
-            width: embed.video.width,
-            height: embed.video.height
-        };
-    }
-    if (Array.isArray(embed.fields) && embed.fields.length) {
-        retEmbed.fields = embed.fields.map(e => ({ name: e.rawName, value: e.rawValue, inline: e.inline }));
-    }
-    return retEmbed;
+    return messageEmbeds.normalize(embed);
 }
 
 export function cleanupUserObject(user: User) {

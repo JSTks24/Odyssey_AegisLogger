@@ -27,6 +27,9 @@ export { React };
 export const { useCallback, useEffect, useMemo, useRef, useState } = React;
 export const Parser = { parse: text => text };
 export const SelectedChannelStore = { getChannelId: () => 'unrelated-channel' };
+export const MessageStore = { getMessage: () => window.fixture.chatMessage };
+export const useStateFromStores = (_stores, read) => read();
+export const Modal = ({ children, title }) => <section aria-label={title}>{children}</section>;
 export const Timestamp = ({ children, timestamp, isEdited }) => <span className='native-edited-timestamp' title={timestamp.toISOString()} data-edited={isEdited}>{children}</span>;
 export const ChannelStore = { getChannel: () => ({ id: 'channel', name: '测试频道', isDM: () => false }) }, GuildStore = { getGuild: () => ({ id: 'guild', name: '隔离服务器' }) }, GuildMemberStore = { getMember: () => null };
 export const Alerts = { show: () => window.fixture.actions.push('clear') }, ContextMenuApi = { openContextMenu: () => window.fixture.actions.push('menu') }, FluxDispatcher = { dispatch() {} }, Menu = {};
@@ -52,7 +55,7 @@ function Preview({ message }) {
     window.fixture.nativeInputs.push({ id: message.id, histories: message.editHistory?.length ?? 0 });
     if (window.fixture.previewThrows) throw new Error('controlled native preview failure');
     const cachedHistory = message.editHistory?.length ? window.fixture.cache[message.id]?.editHistory ?? [] : [];
-    return <article className='native-preview' data-native-id={message.id}><div className='native-current'>{message.content}</div>{cachedHistory.map((edit, index) => <div key={index} className='native-cache-edit'>{edit.content}</div>)}</article>;
+    return <article className='native-preview' data-native-id={message.id}><div className='native-current'>{message.content}</div>{message.embeds?.map((embed, index) => <section className='native-card' key={index}><strong>{embed.title}</strong><p>{embed.description}</p>{embed.fields?.map((field, i) => <p key={i}>{field.name}: {field.value}</p>)}</section>)}{cachedHistory.map((edit, index) => <div key={index} className='native-cache-edit'>{edit.content}</div>)}</article>;
 }
 let state = { version: 0, messagePreview: null, privateChannelRecord: null };
 export default {
@@ -68,11 +71,12 @@ const stubs = {
     "@components/Button": `${reactImport} export const Button = ({ variant, size, ...props }) => <button {...props} />;`,
     "@components/Flex": `${reactImport} export const Flex = ({ flexDirection, ...props }) => <div {...props} />;`,
     "@components/Icons": `${reactImport} export const InfoIcon = () => <span>i</span>;`,
+    "@components/ErrorBoundary": `${reactImport} export default class extends React.Component { state = { failed: false }; static getDerivedStateFromError() { return { failed: true }; } render() { return this.state.failed ? null : this.props.children; } }`,
     "@components/Link": `${reactImport} export const Link = props => <button {...props} />;`,
     "@utils/discord": "export const copyWithToast = () => {}; export const openUserProfile = () => window.fixture.actions.push('profile');",
     "@utils/modal": `${reactImport}
 export const ModalSize = { LARGE: 'large' };
-export const openModal = () => {};
+export const openModal = render => window.fixture.openHistory(render({}));
 export const ModalRoot = ({ children, transitionState, onClose, size, ...props }) => <section {...props}>{children}</section>;
 export const ModalHeader = props => <header {...props} />;
 export const ModalFooter = props => <footer {...props} />;
@@ -80,7 +84,8 @@ export const ModalContent = ({ children, className }) => <div className={classNa
     "@utils/react": `${reactImport} export const LazyComponent = factory => { let component; return props => { component ??= factory(); return React.createElement(component, props); }; };`,
     "../db": db,
     "../index": "export const settings = { store: { sortNewest: true, messagesToDisplayAtOnceInLogs: 4 } };",
-    "../utils": "export const getGuildIdByChannel = () => 'guild'; export const isImageAttachment = attachment => attachment.content_type?.startsWith('image/') || /\\.(png|jpg)$/i.test(attachment.filename ?? ''); export const messageJsonToMessageClass = ({ message }) => ({ ...message }); export const splitRemovedAttachments = attachments => ({ live: attachments.filter(attachment => !attachment.deleted), removed: attachments.filter(attachment => attachment.deleted) });",
+    "..": "export const settings = { use: () => ({ inlineEdits: window.fixture.inlineEdits }) };",
+    "../utils": "export const cleanUpCachedMessage = message => structuredClone(message); export const shouldIgnoreMessage = () => window.fixture.ignore; export const getGuildIdByChannel = () => 'guild'; export const isImageAttachment = attachment => attachment.content_type?.startsWith('image/') || /\\.(png|jpg)$/i.test(attachment.filename ?? ''); export const messageJsonToMessageClass = ({ message }) => ({ ...message }); export const splitRemovedAttachments = attachments => ({ live: attachments.filter(attachment => !attachment.deleted), removed: attachments.filter(attachment => attachment.deleted) });",
     "../utils/i18n": i18n,
     "../utils/logMessageModules": modules,
     "../utils/searchIndex": "export default { isReady: () => true, search: (...args) => window.fixture.search(...args) };",
@@ -93,6 +98,7 @@ export const ModalContent = ({ children, className }) => <div className={classNa
 const entry = `${reactImport}
 import { createRoot } from ${JSON.stringify(reactDom)};
 import logsModal from ${JSON.stringify(path.join(source, "components/LogsModal.tsx"))};
+import chatHistory from ${JSON.stringify(path.join(source, "components/ChatHistory.tsx"))};
 import modules from '../utils/logMessageModules';
 const root = createRoot(document.getElementById('root'));
 const attachment = id => ({ id, filename: '旧截图-' + id + '.png', path: 'saved/' + id, content_type: 'image/png', width: 160, height: 90 });
@@ -112,6 +118,24 @@ const fixture = window.fixture = {
     show() { root.render(<logsModal.LogsModal key={Math.random()} modalProps={{ transitionState: 1 }} />); },
     hide() { root.render(null); }
 };
+fixture.cards = () => {
+    const item = record('cards');
+    item.message.attachments = [];
+    item.message.embeds = [{ title: '当前卡片', description: '当前描述' }];
+    item.message.editHistory = [
+        { content: '', timestamp: '2026-10-17T10:00:00Z', embeds: [{ title: '第一版卡片', description: '第一版描述', fields: [{ name: '状态', value: '等待' }] }] },
+        { content: '', timestamp: '2026-10-17T11:00:00Z', embeds: [{ title: '第二版卡片', description: '第二版描述', fields: [{ name: '状态', value: '完成' }] }] },
+        { content: '', timestamp: '2026-10-17T12:00:00Z', embeds: [] }
+    ];
+    fixture.old = [item];
+    fixture.chatMessage = item.message;
+    fixture.inlineEdits = true;
+    fixture.ignore = false;
+    modules.publish(false);
+    fixture.show();
+};
+fixture.chat = () => root.render(<div className='chat-history'><chatHistory.InlineHistory message={fixture.chatMessage} original={() => <span>原版文字历史</span>} /><chatHistory.EditMarker message={fixture.chatMessage} original={() => <span>原版编辑入口</span>}>打开卡片历史</chatHistory.EditMarker></div>);
+fixture.openHistory = node => root.render(node);
 fixture.malformed = () => {
     fixture.hide();
     const malformed = record('malformed-optional');
@@ -275,6 +299,42 @@ try {
     check("malformed fields preserve history after hydration", await page.getByText("异常附件字段不能隐藏这份历史", { exact: false }).isVisible(), true);
     await page.evaluate(() => window.fixture.hide());
     await tick();
+    await page.evaluate(() => window.fixture.cards());
+    await tick();
+    check("card-only versions appear in order without native modules", await first().locator(".aegis-modal-edit-version .aegis-modal-snapshot-embed").allTextContents(), ["第一版卡片\n第一版描述\n状态\n等待", "第二版卡片\n第二版描述\n状态\n完成"]);
+    check("card removal remains a separate version", await first().locator(".aegis-modal-edit-version").count(), 3);
+    await publish(true);
+    check("native previews show two historical cards", await first().locator(".aegis-modal-edit-version .native-card strong").allTextContents(), ["第一版卡片", "第二版卡片"]);
+    check("card module recovery does not duplicate edit markers", await first().locator(".aegis-modal-edit-marker").count(), 3);
+    check("native previews show the current card separately", await first().locator(".native-card strong").allTextContents(), ["当前卡片", "第一版卡片", "第二版卡片"]);
+    check("card previews receive history-free copies", await page.evaluate(() => window.fixture.nativeInputs.every(input => input.histories === 0)), true);
+    await page.screenshot({ path: path.join(target, "card-history-native.png") });
+    await publish(true, true);
+    check("failed native card previews keep historical fields", await first().locator(".aegis-modal-edit-version .aegis-modal-snapshot-embed").allTextContents(), ["第一版卡片\n第一版描述\n状态\n等待", "第二版卡片\n第二版描述\n状态\n完成"]);
+    check("card fallback does not duplicate edit markers", await first().locator(".aegis-modal-edit-marker").count(), 3);
+    await page.screenshot({ path: path.join(target, "card-history-fallback.png") });
+    await publish(true);
+    await page.evaluate(() => window.fixture.chat());
+    await tick();
+    check("chat inline history uses stored card versions", await page.locator(".chat-history .native-card strong").allTextContents(), ["第一版卡片", "第二版卡片"]);
+    await page.evaluate(() => { window.fixture.inlineEdits = false; window.fixture.chat(); });
+    await tick();
+    check("chat inline switch hides card history", await page.locator(".aegis-modal-edit-version").count(), 0);
+    await page.getByRole("button", { name: "打开卡片历史" }).click();
+    await tick();
+    check("existing edit marker opens all stored card versions", await page.locator(".aegis-modal-edit-version .native-card strong").allTextContents(), ["第一版卡片", "第二版卡片"]);
+    check("history modal also includes current card", await page.getByText("当前卡片", { exact: false }).isVisible(), true);
+    await page.screenshot({ path: path.join(target, "chat-card-history.png") });
+    await page.evaluate(() => { window.fixture.ignore = true; window.fixture.inlineEdits = true; window.fixture.chat(); });
+    await tick();
+    check("chat inline history obeys current filtering", await page.locator(".aegis-modal-edit-version").count(), 0);
+    await page.getByRole("button", { name: "打开卡片历史" }).click();
+    await tick();
+    check("filtered edit marker does not reveal history", await page.locator(".aegis-modal-edit-version").count(), 0);
+    await page.evaluate(() => { window.fixture.ignore = false; window.fixture.chatMessage.editHistory = [{ content: "old text" }]; window.fixture.chat(); });
+    await tick();
+    check("legacy text history delegates to native rendering", await page.getByText("原版文字历史", { exact: true }).isVisible(), true);
+    check("legacy text marker delegates to native rendering", await page.getByText("原版编辑入口", { exact: true }).isVisible(), true);
     check("no unhandled React runtime errors", errors, []);
     const failed = checks.filter(item => !item.passed);
     writeFileSync(path.join(target, "results.json"), JSON.stringify({ checks, errors, failed, source, boundaries: "Actual LogsModal, hooks, LogsMessageContent, styles and messageNavigation. Controlled native preview/cache, host UI, module subscription, DB, search index, filter input, conversion and attachment I/O. No real Discord or logs." }, null, 2));

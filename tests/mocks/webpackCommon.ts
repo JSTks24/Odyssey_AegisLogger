@@ -28,6 +28,7 @@ export const RelationshipStore: any = {
 export const GuildMemberStore: any = { getMember: () => null };
 export const SelectedChannelStore: any = { getChannelId: () => "" };
 export const MessageStore: any = { getMessage: () => null };
+export const ReferencedMessageStore: any = { getMessage: () => undefined };
 
 export type ToastType = "message" | "success" | "failure" | "custom" | "clip" | "link" | "forward" | "bookmark" | "clock";
 export type NewToastVariant = "default" | "success" | "critical";
@@ -73,6 +74,7 @@ export const Alerts: any = { show: vi.fn() };
 export const FluxDispatcher: any = { dispatch: vi.fn() };
 
 export const React: any = {
+    cloneElement: (element: any, props: any) => ({ ...element, props: { ...element.props, ...props } }),
     createElement: (type: any, props: any, ...children: any[]) => ({
         type,
         props: {
