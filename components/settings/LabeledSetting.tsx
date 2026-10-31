@@ -4,8 +4,8 @@
  * SPDX-License-Identifier: GPL-3.0-or-later
  */
 
+import { Text } from "@components/Text";
 import { classNameFactory } from "@utils/css";
-import { Text } from "@webpack/common";
 import type { ReactNode } from "react";
 
 const cl = classNameFactory("aegis-setting-");
@@ -23,8 +23,8 @@ export function LabeledSetting({ option, children }: { option?: LabeledOption; c
         <div className={cl("wrap")}>
             {name && (
                 <div className={cl("label")}>
-                    <Text variant="text-md/medium" className={cl("title")}>{name}</Text>
-                    {description && <Text variant="text-sm/normal" className={cl("description")}>{description}</Text>}
+                    <Text size="md" weight="medium" className={cl("title")}>{name}</Text>
+                    {description && <Text size="sm" weight="normal" className={cl("description")}>{description}</Text>}
                 </div>
             )}
             {children}
